@@ -1,0 +1,70 @@
+# Python-specific
+__pycache__/
+*.py[cod]
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.whl
+pip-log.txt
+pip-wheel-metadata/
+.venv/
+venv/
+env/
+*.env
+
+# AI/ML-specific
+*.h5
+*.pth
+*.pickle
+*.pkl
+model_checkpoints/
+datasets/
+*.data-*
+*.tfrecord
+
+# Sensitive data
+.env
+*.key
+*.pem
+secrets.json
+config.json
+credentials.json
+
+# IDE and editor files
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+.DS_Store  # macOS
+Thumbs.db  # Windows
+
+# Build and temporary files
+*.log
+*.cache
+cache/
+temp/
+tmp/
+*.bak
+*.swp
+
+# UI/UX tool files (if applicable)
+*.fig  # Figma files
+*.xd   # Adobe XD files
+*.sketch
+prototypes/
+
+# Dependency directories
+node_modules/  # If using JavaScript for UI
+package-lock.json
+yarn.lock
+
+# Miscellaneous
+*.zip
+*.tar.gz
+*.rar
+*.out
+*.exe

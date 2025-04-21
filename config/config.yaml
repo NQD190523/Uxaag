@@ -1,0 +1,6 @@
+vector_store_path: "data/vector_store"
+raw_data_path: "data/raw_scraped"
+embedding_model_name: "" # Placeholder - choose from sentence-transformers
+llm_model_path: "models/llm/your_chosen_model.gguf" # Placeholder
+chunk_size: 500
+chunk_overlap: 50

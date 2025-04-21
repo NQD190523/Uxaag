@@ -1,0 +1,6 @@
+sources:
+  - name: "Example Blog 1"
+    url: "https://exampleblog.com/uiux"
+    # Optional: css_selector: ".article-content"
+  - name: "Another Site"
+    url: "https://anothersite.design/articles"
