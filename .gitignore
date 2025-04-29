@@ -61,7 +61,11 @@ prototypes/
 node_modules/  # If using JavaScript for UI
 package-lock.json
 yarn.lock
+poetry.lock
+<<<<<<< Updated upstream
+=======
 
+>>>>>>> Stashed changes
 # Miscellaneous
 *.zip
 *.tar.gz

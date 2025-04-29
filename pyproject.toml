@@ -6,8 +6,11 @@ authors = [
     {name = "NQD190523",email = "duc19052003@gmail.com"}
 ]
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.11,<4.0"
 dependencies = [
+    "langchain (>=0.3.24,<0.4.0)",
+    "langchain-community (>=0.3.22,<0.4.0)",
+    "langchain-openai (>=0.3.14,<0.4.0)"
 ]
 
 [tool.poetry]
