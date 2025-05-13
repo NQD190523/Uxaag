@@ -1,21 +1,18 @@
-[project]
+[tool.poetry]
 name = "uxaag"
 version = "0.1.0"
 description = ""
-authors = [
-    {name = "NQD190523",email = "duc19052003@gmail.com"}
-]
+authors = ["NQD190523 <duc19052003@gmail.com>"]
 readme = "README.md"
-requires-python = ">=3.11,<4.0"
-dependencies = [
-    "langchain (>=0.3.24,<0.4.0)",
-    "langchain-community (>=0.3.22,<0.4.0)",
-    "langchain-openai (>=0.3.14,<0.4.0)"
-]
-
-[tool.poetry]
 packages = [{include = "uxaag", from = "src"}]
 
+[tool.poetry.dependencies]
+python = ">=3.11,<4.0"
+langchain = ">=0.3.24,<0.4.0"
+langchain-community = ">=0.3.22,<0.4.0"
+openai = ">=1.0.0"
+langchain-openai = "^0.3.16"
+langgraph = "^0.4.3"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
