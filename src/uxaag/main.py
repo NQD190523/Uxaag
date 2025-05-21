@@ -1,23 +1,43 @@
 import os
 from langchain_openai import AzureChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
-from langchain_core.runnables.history import RunnableWithMessageHistory
+from langchain_core.runnables.history import RunnableWithMessageHistory, RunnableLambda
 from langchain_core.chat_history import InMemoryChatMessageHistory
 from langchain_core.messages import HumanMessage, AIMessage
 from dotenv import load_dotenv
+from langchain_core.tools import tool
 import tiktoken
 
+def load_environment():
+    """Load environment variables and verify required ones are present."""
+    load_dotenv(override=True)  # override=True ensures new values take precedence
+    github_token = os.getenv('GITHUB_TOKEN')
+    if not github_token:
+        raise ValueError("GITHUB_TOKEN not found in environment variables. Please check your .env file.")
+    return github_token
+
 # Load environment variables
-load_dotenv()
+github_token = load_environment()
+# print(github_token)
+
+# Define a simple function to print a message
+@tool
+def log_query(query: str) -> None:
+    """Prints a message to log the query being processed."""
+    print(f"Processing UX query: {query}")
 
 # Initialize the LLM
 llm = AzureChatOpenAI(
+    api_key=github_token,  # Use the loaded token
+    api_version="2024-06-01",
     azure_endpoint="https://models.inference.ai.azure.com",
-    api_key=os.environ["GITHUB_TOKEN"],
-    api_version="2024-04-01-preview",
     model="gpt-4o",
     max_tokens=4000  # Maximum output tokens
 )
+
+# Bind the tool to the LLM
+tools = [log_query]
+llm_with_tools = llm.bind_tools(tools)
 
 # Define the prompt template
 prompt = ChatPromptTemplate.from_messages([
@@ -51,12 +71,37 @@ def get_chat_history(session_id: str):
     history.messages = messages
     return history
 
+# Create a custom chain to handle tool calls and format output
+def create_tool_chain():
+    def handle_tool_calls(response: AIMessage) -> dict:
+        # Handle tool calls
+        if hasattr(response, "tool_calls") and response.tool_calls:
+            for tool_call in response.tool_calls:
+                if tool_call["name"] == "log_query":
+                    log_query.invoke({"query": tool_call["args"]["query"]})
+                    # After tool call, get a new response from the LLM
+                    messages = prompt.format_messages(
+                        question=tool_call["args"]["query"],
+                        history=[]
+                    )
+                    response = llm.invoke(messages)
+        
+        # Ensure we have content in the response
+        if not response.content:
+            return {"answer": "I apologize, but I couldn't generate a response. Please try again."}
+            
+        return {"answer": response.content}
+    
+    # Create the chain: prompt -> llm_with_tools -> handle_tool_calls
+    return prompt | llm_with_tools | RunnableLambda(handle_tool_calls)
+
 # Create the runnable with message history
 chain = RunnableWithMessageHistory(
-    runnable=prompt | llm,
+    runnable=create_tool_chain(),
     get_session_history=get_chat_history,
     input_messages_key="question",
-    history_messages_key="history"
+    history_messages_key="history",
+    output_messages_key="answer"
 )
 
 # Function to generate UX response
@@ -66,15 +111,22 @@ def generate_ux_response(question: str, session_id: str = "default") -> str:
         response = chain.invoke(
             {"question": question},
             config={"configurable": {"session_id": session_id}}
-        ).content
-        return response
+        )
+        
+        # Ensure we have a valid response
+        if not response or "answer" not in response:
+            return "I apologize, but I couldn't generate a response. Please try again."
+            
+        return response["answer"]
     except Exception as e:
         print(f"Error processing '{question}': {str(e)}")
         return f"Error: {str(e)}"
 
+# Function to print a separator
 def print_separator():
     print("\n" + "="*80 + "\n")
 
+# Function to start an interactive session
 def interactive_session():
     print_separator()
     print("Welcome to UXAAG - UX Design AI Assistant!")
