@@ -1,4 +1,5 @@
 import os
+import asyncio
 from langchain_openai import AzureChatOpenAI
 from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.runnables.history import RunnableWithMessageHistory, RunnableLambda
@@ -7,6 +8,10 @@ from langchain_core.messages import HumanMessage, AIMessage
 from dotenv import load_dotenv
 from langchain_core.tools import tool
 import tiktoken
+from uxaag.web_extractor.agent import WebExtractorAgent
+from uxaag.web_extractor.crawler import WebCrawler
+
+target_url = "https://www.nngroup.com/articles/definition-user-experience/"
 
 def load_environment():
     """Load environment variables and verify required ones are present."""
@@ -26,6 +31,7 @@ def log_query(query: str) -> None:
     """Prints a message to log the query being processed."""
     print(f"Processing UX query: {query}")
 
+
 # Initialize the LLM
 llm = AzureChatOpenAI(
     api_key=github_token,  # Use the loaded token
@@ -39,6 +45,9 @@ llm = AzureChatOpenAI(
 tools = [log_query]
 llm_with_tools = llm.bind_tools(tools)
 
+# Initialize the web extractor agent
+extractor = WebExtractorAgent(llm=llm)
+
 # Define the prompt template
 prompt = ChatPromptTemplate.from_messages([
     ("system", """You are UXAAG, a UX design AI assistant. Provide concise, actionable UX solutions in bullet points for the given question, using the conversation history for context. For general queries about UXAAG, describe its purpose in 3-5 bullet points. For color-related queries, include specific hex codes. Do not include phrases like "Response end"."""),  # System prompt for instructions
@@ -48,6 +57,29 @@ prompt = ChatPromptTemplate.from_messages([
 
 # Initialize in-memory chat history store
 store = {}
+
+async def main():
+    # Crawl the website
+    async with WebCrawler(max_depth=1, max_pages=3) as crawler:
+        # Crawl a single page first
+        result = await crawler.crawl_single(target_url)
+        
+        if result:
+            print(f"\nCrawled URL: {result.url}")
+            print(f"Found {len(result.links)} links")
+            
+            # Extract information using the web extractor
+            extraction_result = await extractor.extract(
+                web_data=result.content,
+                requirements="Extract the main heading and any product information"
+            )
+            print("\nExtracted Information:")
+            print(extraction_result["extracted_data"])
+            
+            # Store the extracted data in the chat history
+            if "interactive_session" not in store:
+                store["interactive_session"] = InMemoryChatMessageHistory()
+            store["interactive_session"].add_message(HumanMessage(content=extraction_result["extracted_data"]))
 
 # Function to estimate token count using tiktoken
 def estimate_tokens(messages: list) -> int:
@@ -176,4 +208,5 @@ def interactive_session():
             print("Please try again or type 'exit' to quit.")
 
 if __name__ == "__main__":
+    asyncio.run(main())
     interactive_session()
