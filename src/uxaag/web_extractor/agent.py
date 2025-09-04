@@ -6,12 +6,17 @@ from typing import Any, Dict, List, Optional
 from langchain.agents import AgentExecutor
 from langchain.agents.format_scratchpad import format_to_openai_function_messages
 from langchain.agents.output_parsers import OpenAIFunctionsAgentOutputParser
-from langchain.prompts import ChatPromptTemplate, MessagesPlaceholder
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain.tools.render import format_tool_to_openai_function
 from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 
-from .extractors import BaseExtractor, TextExtractor, DataExtractor
+# Handle imports for both direct execution and module import
+try:
+    # Try relative imports first (when imported as module)
+    from .extractors import BaseExtractor, TextExtractor, DataExtractor
+except ImportError:
+    # Fall back to absolute imports (when run directly)
+    from extractors import BaseExtractor, TextExtractor, DataExtractor
 
 class WebExtractorAgent:
     """Agent responsible for extracting information from web crawl data."""
@@ -73,9 +78,19 @@ class WebExtractorAgent:
             | OpenAIFunctionsAgentOutputParser()
         )
         
+        # Convert our custom tools to LangChain tool format
+        langchain_tools = []
+        for tool in self.tools:
+            from langchain.tools import Tool
+            langchain_tools.append(Tool(
+                name=tool.name,
+                description=tool.description,
+                func=tool.run
+            ))
+        
         return AgentExecutor(
             agent=agent,
-            tools=self.tools,
+            tools=langchain_tools,
             verbose=self.verbose,
             handle_parsing_errors=True
         )

@@ -4,7 +4,7 @@ Extractors for processing different types of web data.
 
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
-from langchain.tools import BaseTool
+from langchain_core.tools import BaseTool
 from pydantic import BaseModel, Field, PrivateAttr
 
 class ExtractionResult(BaseModel):
@@ -13,24 +13,33 @@ class ExtractionResult(BaseModel):
     metadata: Dict[str, Any] = Field(default_factory=dict, description="Metadata about the extraction")
     confidence: float = Field(default=1.0, description="Confidence score of the extraction")
 
-class ExtractorTool(BaseTool):
+class ExtractorTool:
     """Tool wrapper for extractors."""
-    
-    _extractor: 'BaseExtractor' = PrivateAttr()
     
     def __init__(self, extractor: 'BaseExtractor'):
         """Initialize the tool with an extractor."""
-        super().__init__(
-            name=extractor.__class__.__name__,
-            description=extractor.__doc__,
-            func=self._run
-        )
         self._extractor = extractor
+        self.name = extractor.__class__.__name__
+        self.description = extractor.__doc__ or "Extractor tool"
         
-    async def _run(self, data: Any) -> Dict[str, Any]:
+    def run(self, data: Any) -> Dict[str, Any]:
         """Run the extractor on the input data."""
-        result = await self._extractor.extract(data)
-        return result.dict()
+        import asyncio
+        try:
+            # Try to run as async first
+            loop = asyncio.get_event_loop()
+            if loop.is_running():
+                # If we're in an async context, create a task
+                task = asyncio.create_task(self._extractor.extract(data))
+                result = asyncio.run_coroutine_threadsafe(task, loop).result()
+            else:
+                # If no loop is running, run it directly
+                result = asyncio.run(self._extractor.extract(data))
+        except RuntimeError:
+            # Fallback to sync execution
+            result = asyncio.run(self._extractor.extract(data))
+        
+        return result.model_dump() if hasattr(result, 'model_dump') else result.dict()
 
 class BaseExtractor(ABC):
     """Base class for all extractors."""
