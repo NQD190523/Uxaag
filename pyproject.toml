@@ -8,7 +8,7 @@ version = "1.0.0"
 description = "Collaborative chat rooms with Retrieval-Augmented Generation capabilities"
 authors = ["Duc <duc@example.com>"]
 readme = "README.md"
-package-mode = false  # dependency-only env (used to run Alembic); legacy app/ lives in _legacy/
+package-mode = false  # dependency-only env (used to run Alembic)
 
 [tool.poetry.dependencies]
 python = "^3.11"
