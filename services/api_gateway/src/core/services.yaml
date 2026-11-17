@@ -1,0 +1,70 @@
+# API gateway routing table. Each key under `services:` is an upstream microservice.
+#
+# NOTE: WebSockets do NOT go through the gateway; the browser connects directly to
+# chat-service (/api/v1/ws/chat/{room_id}?token=), so there is no websocket entry here.
+#
+# Routing: the first path segment of an incoming request must equal the key name
+# (e.g. /chat/rooms -> key `chat`). The gateway then forwards to `url` + the rest of
+# the path. With `strip_prefix: true` the public `prefix` is removed first, so
+#   /chat/rooms -> http://chat-service:8005/api/v1/chat/rooms
+# `url` is the base URL INCLUDING the service's own router prefix.
+#
+# Fields:
+#   url          upstream base URL (docker-compose service hostnames)
+#   prefix       public path prefix handled by the gateway
+#   strip_prefix remove `prefix` before forwarding (default true)
+#   timeout      upstream timeout in seconds (default 30)
+#   protected    true (default): gateway verifies the Bearer JWT and injects the
+#                `x-user-id` / `x-user-email` headers; false: public, no token check
+services:
+  # Auth service - handles all /auth/* routes
+  auth:
+    # Base URL of the auth-service (including its API prefix + /auth router prefix)
+    # Assumes auth-service exposes routes like: /api/v1/auth/login, /api/v1/auth/register, ...
+    url: http://auth-service:8006/api/v1/auth
+
+    # Public prefix exposed by the API gateway
+    # Client calls:  POST http://<gateway-host>/auth/login
+    #                POST http://<gateway-host>/auth/register
+    prefix: /auth
+
+    # Strip the /auth prefix before forwarding so that:
+    #   /auth/login    -> /login    (appended to .../api/v1/auth)
+    #   /auth/register -> /register (appended to .../api/v1/auth)
+    strip_prefix: true
+
+    timeout: 30
+    # Public on purpose: login/register/refresh have no token yet; /auth/me verifies
+    # the JWT itself inside the auth service.
+    protected: false
+  
+  chat:
+    url: http://chat-service:8005/api/v1/chat
+    prefix: /chat
+    strip_prefix: true
+    timeout: 30
+    protected: true
+  
+  user:
+    url: http://auth-service:8006/api/v1/user
+    prefix: /user
+    strip_prefix: true
+    timeout: 30
+    protected: true
+
+  # Protected. Gateway /rag/<rest> -> RAG service /api/v1/rag/<rest>.
+  # The RAG llm router is mounted at /api/v1/rag/llm, so /rag/llm/chat resolves to it.
+  rag:
+    url: http://rag-service:8002/api/v1/rag
+    prefix: /rag
+    strip_prefix: true
+    timeout: 120
+    protected: true
+
+  # Long timeout (300 s) because document processing/uploads can be slow.
+  documents:
+    url: http://document-service:8001/api/v1/documents
+    prefix: /documents
+    strip_prefix: true
+    timeout: 300
+    protected: true

@@ -1,21 +1,57 @@
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
 [tool.poetry]
-name = "uxaag"
-version = "0.1.0"
-description = ""
-authors = ["NQD190523 <duc19052003@gmail.com>"]
+name = "rag-chat-room-web"
+version = "1.0.0"
+description = "Collaborative chat rooms with Retrieval-Augmented Generation capabilities"
+authors = ["Duc <duc@example.com>"]
 readme = "README.md"
-packages = [{include = "uxaag", from = "src"}]
+package-mode = false  # dependency-only env (used to run Alembic); legacy app/ lives in _legacy/
 
 [tool.poetry.dependencies]
-python = ">=3.11,<4.0"
-langchain = ">=0.3.24,<0.4.0"
-langchain-community = ">=0.3.22,<0.4.0"
-openai = ">=1.0.0"
-langchain-openai = "^0.3.16"
-langgraph = "^0.4.3"
-bs4 = "^0.0.2"
-lxml = "^5.4.0"
+python = "^3.11"
+fastapi = "^0.104.1"
+uvicorn = {extras = ["standard"], version = "^0.24.0"}
+pydantic = "^2.5.0"
+httpx = "^0.25.2"
+pyyaml = "^6.0.1"
+python-dotenv = "^1.0.0"
+sqlalchemy = "^2.0.23"
+alembic = "^1.13.1"
+aiosqlite = "^0.19.0"
+chromadb = "^0.4.22"
+sentence-transformers = "^2.2.2"
+numpy = "^1.24.3"
+openai = "^1.3.7"
+langchain = "^0.1.0"
+langchain-openai = "^0.0.2"
+aiohttp = "^3.9.1"
+beautifulsoup4 = "^4.12.2"
+lxml = "^4.9.3"
+python-multipart = "^0.0.6"
+PyMuPDF = ">=1.24.0"
+python-jose = {extras = ["cryptography"], version = "^3.3.0"}
+bcrypt = "^4.0.0"
+email-validator = "^2.1.0"
+coloredlogs = "^15.0.1"
+asyncpg = "^0.30.0"
+psycopg2-binary = "^2.9.11"
+sqlmodel = "^0.0.32"
+shared = { path = "libs/shared", develop = true }
 
-[build-system]
-requires = ["poetry-core>=2.0.0,<3.0.0"]
-build-backend = "poetry.core.masonry.api"
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.3"
+pytest-asyncio = "^0.21.1"
+black = "^23.11.0"
+isort = "^5.12.0"
+flake8 = "^6.1.0"
+
+[tool.black]
+line-length = 88
+target-version = ['py311']
+
+[tool.isort]
+profile = "black"
+line_length = 88

@@ -1,0 +1,131 @@
+"""Redis integration for chat-service (infrastructure layer).
+
+Design:
+- Full chat messages are broadcast only to the specific room in-memory.
+- Lightweight room-list updates are published to one global Redis channel.
+- Each worker subscribes to that global channel and broadcasts updates to all
+  connected sockets so every chat list can refresh in real time.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from typing import Final
+
+import redis.asyncio as redis
+
+from core.config import config
+from services.websocket import websocket_service
+from shared.logger import get_logger
+
+logger = get_logger("chat-service")
+
+CHAT_LIST_UPDATES_CHANNEL: Final[str] = "chat_list_updates"
+
+_redis_url = config.get_redis_url()
+
+redis_client: redis.Redis = redis.from_url(
+    _redis_url,
+    decode_responses=True,
+    socket_connect_timeout=5,
+    socket_keepalive=True,
+)
+
+# Second client so pub/sub does not block or conflict with publish on the same connection.
+redis_subscriber: redis.Redis = redis.from_url(
+    _redis_url,
+    decode_responses=True,
+    socket_connect_timeout=5,
+    socket_keepalive=True,
+)
+
+
+async def get_redis():
+    """Return the shared publisher/command Redis client (e.g. as a dependency)."""
+    return redis_client
+
+
+async def check_redis_connection() -> bool:
+    """Ping Redis and log explicit connectivity status.
+
+    Returns:
+        True if PING succeeded, False otherwise. Never raises: the service keeps
+        running without Redis (cross-worker fan-out is then unavailable).
+    """
+    try:
+        pong = await redis_client.ping()
+        if pong:
+            logger.info("[redis] Connected successfully (PING -> PONG)")
+            return True
+        logger.warning("[redis] PING returned falsy response")
+        return False
+    except Exception as e:
+        logger.error(f"[redis] Connection failed: {e}")
+        return False
+
+
+async def run_room_pubsub_listener(stop_event: asyncio.Event) -> None:
+    """Listen to the global chat-list channel and fan out to local WebSockets.
+
+    Runs until ``stop_event`` is set (started from the app lifespan). Each
+    received string is forwarded as-is (it is a ``last_message_updated``
+    payload built by ``ws_payloads.build_last_message_payload``).
+
+    Args:
+        stop_event: Set on shutdown to end the listener and clean up.
+    """
+    pubsub = redis_subscriber.pubsub()
+    try:
+        await pubsub.subscribe(CHAT_LIST_UPDATES_CHANNEL)
+    except Exception as e:
+        logger.error(
+            "Redis pub/sub unavailable; only same-worker WebSocket fan-out works: %s",
+            e,
+        )
+        # Degraded mode: keep this task alive until shutdown so the lifespan
+        # ``await listener_task`` returns cleanly.
+        await stop_event.wait()
+        try:
+            await pubsub.close()
+        except Exception:
+            pass
+        return
+
+    logger.info(
+        "Redis pub/sub listener started (channel=%s)",
+        CHAT_LIST_UPDATES_CHANNEL,
+    )
+
+    # ``pubsub.listen()`` blocks forever, so it runs in its own task; the outer
+    # coroutine waits on ``stop_event`` and cancels it on shutdown.
+    async def consume() -> None:
+        async for msg in pubsub.listen():
+            if stop_event.is_set():
+                return
+            # Skip subscribe/unsubscribe confirmations; only real messages matter.
+            if msg.get("type") != "message":
+                continue
+            data = msg.get("data")
+            if not isinstance(data, str):
+                continue
+            try:
+                # Every room's sockets get it so any open chat list can refresh.
+                await websocket_service.broadcast_all(message=data)
+            except Exception as e:
+                logger.error("Redis fan-out global broadcast failed: %s", e)
+
+    task = asyncio.create_task(consume())
+    try:
+        await stop_event.wait()
+    finally:
+        task.cancel()
+        try:
+            await task
+        except asyncio.CancelledError:
+            pass
+        try:
+            await pubsub.unsubscribe(CHAT_LIST_UPDATES_CHANNEL)
+            await pubsub.close()
+        except Exception as e:
+            logger.warning("pubsub cleanup: %s", e)
+        logger.info("Redis pub/sub listener stopped")
