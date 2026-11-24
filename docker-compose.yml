@@ -1,0 +1,81 @@
+services:
+# Redis
+  redis:
+    image: redis:7-alpine
+    container_name: redis-chat
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis-data:/data
+    restart: unless-stopped
+  # API Gateway
+  api-gateway:
+    build:
+      context: .
+      dockerfile: services/api_gateway/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./services/api_gateway:/app/services/api_gateway
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Chat Service (build context = repo root so Dockerfile can COPY libs/shared + services/chat_service)
+  chat-service:
+    build:
+      context: .
+      dockerfile: services/chat_service/Dockerfile
+    ports:
+      - "8005:8005"
+    volumes:
+      - ./services/chat_service:/app/services/chat_service
+    # Inside Docker, localhost is this container — use the compose service name for Redis.
+    environment:
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # Authentication Service
+  auth-service:
+    build:
+      context: .
+      dockerfile: services/auth_service/Dockerfile
+    volumes:
+      - ./services/auth_service:/app/services/auth_service
+    depends_on:
+      - redis
+    restart: unless-stopped
+    ports:
+      - "8006:8006"
+
+  # Document Service
+  document-service:
+    build:
+      context: .
+      dockerfile: services/document_service/Dockerfile
+    ports:
+      - "8001:8001"
+    volumes:
+      - ./services/document_service:/app/services/document_service
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+  # RAG Service
+  rag-service:
+    build:
+      context: .
+      dockerfile: services/rag_service/Dockerfile
+    ports:
+      - "8002:8002"
+    volumes:
+      - ./services/rag_service:/app/services/rag_service
+    depends_on:
+      - redis
+    restart: unless-stopped
+
+# Named volumes used by services (e.g. redis-data above) must be declared here.
+volumes:
+  redis-data:

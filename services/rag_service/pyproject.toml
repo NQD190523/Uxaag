@@ -1,0 +1,21 @@
+[tool.poetry]
+name = "rag-service"
+version = "0.1.0"
+description = "Retrieval-Augmented Generation microservice (LangChain + LangGraph)"
+authors = ["NQD190523 <duc19052003@gmail.com>"]
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.11,<4.0"
+fastapi = ">=0.128.0,<0.129.0"
+uvicorn = { version = ">=0.40.0,<0.41.0", extras = ["standard"] }
+python-dotenv = ">=1.2.1,<2.0.0"
+langchain-core = ">=0.3.45,<2.0.0"
+langchain-openai = ">=0.2.14,<2.0.0"
+langchain-ollama = ">=0.2.0,<1.0.0"
+langgraph = ">=0.2.50,<2.0.0"
+shared = { path = "../../libs/shared", develop = true }
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"

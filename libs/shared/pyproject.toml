@@ -1,0 +1,16 @@
+[tool.poetry]
+name = "shared"
+version = "0.1.0"
+description = "Shared utilities and models for RAG Chat Room Web microservices"
+authors = ["NQD190523 <duc19052003@gmail.com>"]
+readme = "README.md"
+packages = [{ include = "shared" }]
+
+[tool.poetry.dependencies]
+python = ">=3.11,<4.0"
+sqlmodel = ">=0.0.31"
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
+

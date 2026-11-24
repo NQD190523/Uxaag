@@ -1,0 +1,25 @@
+[tool.poetry]
+name = "auth-service"
+version = "0.1.0"
+description = ""
+authors = ["NQD190523 <duc19052003@gmail.com>"]
+readme = "README.md"
+package-mode = false
+
+[tool.poetry.dependencies]
+python = ">=3.11,<4.0"
+fastapi = ">=0.128.0,<0.129.0"
+uvicorn = ">=0.40.0,<0.41.0"
+sqlalchemy = { version = ">=2.0.45,<3.0.0", extras = ["asyncio"] }
+sqlmodel = ">=0.0.31,<0.0.32"
+asyncpg = ">=0.31.0,<0.32.0"
+python-dotenv = ">=1.2.1,<2.0.0"
+pydantic-settings = ">=2.12.0,<3.0.0"
+bcrypt = ">=5.0.0,<6.0.0"
+pyjwt = ">=2.10.1,<3.0.0"
+email-validator = ">=2.3.0,<3.0.0"
+shared = { path = "../../libs/shared", develop = true }
+
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
