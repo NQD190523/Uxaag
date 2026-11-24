@@ -19,6 +19,9 @@ engine: AsyncEngine = create_async_engine (
         config.get_database_url(),
         echo=False,  # Set to True to log every SQL statement (noisy)
         future=True,
+        # SECURITY: keep bound values (message text, ids) out of DB error messages,
+        # which end up in logs/chat-service/*.log via logger.exception.
+        hide_parameters=True,
         # Validate pooled connections before use and recycle them every 5 minutes
         # so stale connections dropped by the DB/pooler do not cause request errors.
         pool_pre_ping=True,
@@ -47,11 +50,8 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
     Yields:
         An ``AsyncSession`` (``expire_on_commit=False``, ``autoflush=False``).
     """
-    logger.info("Creating new database session")
     async with async_session_factory() as session:
-        logger.info("Database session opened")
         yield session
-    logger.info("Database session closed")
     
 # For websocket/background flows where explicit context management is needed.
 @asynccontextmanager
@@ -64,11 +64,8 @@ async def get_background_session() -> AsyncIterator[AsyncSession]:
     Yields:
         A fresh ``AsyncSession`` that is always closed on exit.
     """
-    logger.info("Creating background database session")
     async with async_session_factory() as session:
-        logger.info("Background database session opened")
         try:
             yield session
         finally:
             await session.close()
-            logger.info("Background database session closed")

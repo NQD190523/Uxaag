@@ -46,21 +46,17 @@ async def llm_chat(body: LLMChatRequest):
     Errors: 400 (``ValueError`` from the graph), 502 (provider call failed).
     """
     try:
-        logger.info(
-            "rag llm endpoint hit | message_len=%s | has_system_prompt=%s",
-            len(body.message or ""),
-            bool((body.system_prompt or "").strip()),
-        )
         reply = await run_llm_graph(
             body.message,
             system_prompt=body.system_prompt,
         )
         return LLMChatResponse(success=True, reply=reply)
     except ValueError as e:
-        logger.warning("rag llm bad request | %s", e)
+        logger.warning("LLM request rejected: reason=%s", e)
         raise HTTPException(status_code=400, detail=str(e)) from e
     except Exception as e:
-        logger.exception("rag llm endpoint failed")
+        # The traceback was already logged by the model node; log only the outcome here.
+        logger.error("LLM request failed: error_type=%s", type(e).__name__)
         raise HTTPException(
             status_code=502,
             detail=f"LLM request failed: {e!s}",

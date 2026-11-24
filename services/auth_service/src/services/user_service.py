@@ -39,7 +39,7 @@ async def get_matching_users(search_query: str, session: Any) -> List[MatchingUs
             full_name=user.full_name
         ) for user in users]
     except Exception as e:
-        logger.error(f"Failed to get matching users: {str(e)}")
+        logger.debug("Matching-users lookup failed")
         raise
 
 
@@ -71,7 +71,7 @@ async def get_user_profile_by_id(user_id: int, session: Any) -> UserProfile:
             last_login=user.last_login,
         )
     except Exception as e:
-        logger.error(f"Failed to get user profile by id: {str(e)}")
+        logger.debug("Profile lookup by id failed")
         raise
 
 

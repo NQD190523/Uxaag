@@ -13,12 +13,11 @@ from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-import logging
 
 from shared.logger import get_logger
 from services.vector_manager import VectorStoreManager
 
-logger = get_logger(__name__)
+logger = get_logger("vector-store-service")
 
 # Create router
 router = APIRouter(prefix="/vectors", tags=["vectors"])
@@ -137,7 +136,7 @@ async def store_documents(
         )
     
     except Exception as e:
-        logger.error(f"Failed to store documents: {str(e)}")
+        logger.exception("Store documents failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to store documents: {str(e)}"
@@ -192,7 +191,7 @@ async def search_documents(
         )
     
     except Exception as e:
-        logger.error(f"Document search failed: {str(e)}")
+        logger.exception("Search documents failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Document search failed: {str(e)}"
@@ -233,7 +232,7 @@ async def delete_documents(
         }
     
     except Exception as e:
-        logger.error(f"Failed to delete documents: {str(e)}")
+        logger.exception("Delete documents failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to delete documents: {str(e)}"
@@ -272,7 +271,7 @@ async def get_document(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Failed to get document: {str(e)}")
+        logger.exception("Get document failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get document: {str(e)}"
@@ -311,7 +310,7 @@ async def list_documents(
         }
     
     except Exception as e:
-        logger.error(f"Failed to list documents: {str(e)}")
+        logger.exception("List documents failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to list documents: {str(e)}"
@@ -341,7 +340,7 @@ async def clear_collection(
         }
     
     except Exception as e:
-        logger.error(f"Failed to clear collection: {str(e)}")
+        logger.exception("Clear collection failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to clear collection: {str(e)}"
@@ -364,7 +363,7 @@ async def health_check():
             "collections": list(store.collections.keys())
         }
     except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
+        logger.exception("Health check failed")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Vector store service is unhealthy"

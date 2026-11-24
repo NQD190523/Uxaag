@@ -8,15 +8,15 @@ from typing import AsyncGenerator
 from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine, async_sessionmaker
 from sqlmodel.ext.asyncio.session import AsyncSession
 from core.config import setting
-from shared.logger import get_logger
 
-# Get configured logger
-logger = get_logger("auth-service")
 # Create an asynchronous SQLAlchemy
 engine: AsyncEngine = create_async_engine (
         setting.DATABASE_URL,
         echo=False,  # Set to False in production
         future=True,
+        # SECURITY: keep bound values (tokens, emails, password hashes) out of DB error
+        # messages, which end up in logs/auth-service/*.log via logger.exception.
+        hide_parameters=True,
         pool_pre_ping=True,
         pool_recycle=300,
         # TODO(security): ssl is disabled here, which is only acceptable for local/dev connections;
@@ -45,8 +45,5 @@ async def get_async_session() -> AsyncGenerator[AsyncSession, None]:
     Yields:
         An open async SQLModel session bound to the shared engine.
     """
-    logger.info("Creating new database session")
     async with async_session_factory() as session:
-        logger.info("Database session opened")
         yield session
-    logger.info("Database session closed")

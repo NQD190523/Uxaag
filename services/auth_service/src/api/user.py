@@ -45,7 +45,7 @@ async def get_user_page_info(
         raise
     except Exception as e:
         # Log details server-side; the client only gets a generic message.
-        logger.exception("Failed to get user info: %s", e)
+        logger.exception("User info fetch failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error",
@@ -83,7 +83,7 @@ async def update_user_page_info(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Failed to update user profile: %s", e)
+        logger.exception("Profile update failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error",
@@ -112,7 +112,7 @@ async def change_user_password(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Failed to change user password: %s", e)
+        logger.exception("Password change failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error",
@@ -144,7 +144,7 @@ async def get_user_profile(
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Failed to get user profile: %s", e)
+        logger.exception("Profile fetch failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error",
@@ -180,7 +180,7 @@ async def get_matching_users(
         # Keep the 400 for a missing ``q`` instead of turning it into a 500.
         raise
     except Exception as e:
-        logger.exception("Failed to get matching users: %s", e)
+        logger.exception("User search failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error",

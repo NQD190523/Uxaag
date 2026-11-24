@@ -10,6 +10,7 @@ HttpOnly refresh-token cookie). Business logic lives in ``AuthService``.
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response, status
 
+from shared.log_context import bind_user
 from shared.logger import get_logger
 from schemas.auth_schema import UserRegistration, UserLogin, AuthResponse
 from db.database import get_async_session
@@ -78,7 +79,6 @@ async def register_user(
     Raises:
         HTTPException: 400 if email exists, 500 if registration fails
     """
-    logger.info("Registering new user")
     try:
         # Delegate to AuthService for registration logic
         auth_result = await auth_service.register_user(user, session)
@@ -94,13 +94,13 @@ async def register_user(
             samesite="lax",
         )
 
-        logger.info("User registered successfully")
+        logger.info("User registered user_id=%s", auth_result.user.user_id if auth_result.user else "-")
         return auth_result
         
     except ValueError as ve:
         # Handle validation errors (email exists, etc.)
         error_msg = str(ve)
-        logger.warning("Registration validation error: %s", error_msg)
+        logger.warning("Registration rejected reason=%s", error_msg)
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=error_msg
@@ -109,8 +109,8 @@ async def register_user(
         # Let deliberate HTTP errors raised above pass through unchanged.
         raise
     except Exception as e:
-        # Handle unexpected errors (logger.exception also records the traceback)
-        logger.exception("Registration failed: %s", e)
+        # logger.exception also records the traceback
+        logger.exception("Registration failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Registration failed. Please try again later."
@@ -137,10 +137,9 @@ async def login_user(user: UserLogin, response: Response, session=Depends(get_as
     - Access and refresh token creation
     - User profile and AuthResponse construction
     """
-    logger.info("Login attempt")
     try:
         auth_result = await auth_service.login_user(user, session)
-        logger.info("User logged in successfully")
+        logger.info("User logged in user_id=%s", auth_result.user.user_id if auth_result.user else "-")
         
         # SECURITY: HttpOnly cookie, SameSite=lax; secure=False is dev-only.
         # max_age follows the refresh-token lifetime (not the access token's expires_in).
@@ -163,7 +162,7 @@ async def login_user(user: UserLogin, response: Response, session=Depends(get_as
         return auth_result
     except ValueError as ve:
         error_msg = str(ve)
-        logger.warning("Login failed: %s", error_msg)
+        logger.warning("Login rejected reason=%s", error_msg)
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail=error_msg,
@@ -172,7 +171,7 @@ async def login_user(user: UserLogin, response: Response, session=Depends(get_as
         # Keep the explicit 500 "Token not generated" (and any other HTTPException) as is.
         raise
     except Exception as e:
-        logger.exception("Login failed: %s", e)
+        logger.exception("Login failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Login failed. Please try again later.",
@@ -214,12 +213,12 @@ async def refresh_token_endpoint(response: Response, request: Request, session=D
         return auth_result
     except ValueError as ve:
         error_msg = str(ve)
-        logger.warning("Refresh token verification failed: %s", error_msg)
+        logger.warning("Token refresh rejected reason=%s", error_msg)
         raise HTTPException(status_code=401, detail=error_msg)
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("Refresh token verification failed: %s", e)
+        logger.exception("Token refresh failed")
         raise HTTPException(status_code=500, detail="Refresh token verification failed. Please try again later.")
 
 @router.get("/me", response_model=AuthResponse)
@@ -245,7 +244,8 @@ async def get_me(request: Request, response: Response, session=Depends(get_async
     user_id = payload.get("user_id")
     if not user_id:
         raise HTTPException(status_code=401, detail="User not found")
-    logger.info("Getting user profile, user_id: %s", user_id)
+    # Tag the rest of this request's log lines with the verified caller.
+    bind_user(user_id)
     try:
         user = await auth_service.get_me(session, int(user_id))
         return AuthResponse(
@@ -256,11 +256,11 @@ async def get_me(request: Request, response: Response, session=Depends(get_async
         )
     except ValueError as ve:
         error_msg = str(ve)
-        logger.warning("User profile fetch failed: %s", error_msg)
+        logger.warning("Profile fetch rejected user_id=%s reason=%s", user_id, error_msg)
         raise HTTPException(status_code=401, detail=error_msg)
     except HTTPException:
         raise
     except Exception as e:
-        logger.exception("User profile fetch failed: %s", e)
+        logger.exception("Profile fetch failed user_id=%s", user_id)
         raise HTTPException(status_code=500, detail="User profile fetch failed. Please try again later.")
     

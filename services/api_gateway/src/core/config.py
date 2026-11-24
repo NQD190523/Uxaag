@@ -3,13 +3,22 @@
 Loads ``.env`` for the gateway, reads the upstream service table from
 ``core/services.yaml`` (next to this module) into ``SERVICES`` and exposes the JWT settings used by
 ``core/security.py``.
+
+Optional env ``GATEWAY_UPSTREAM_HOST`` (e.g. ``127.0.0.1``) replaces the hostname of
+every upstream URL at load time, so a local non-Docker run can reach services that
+``services.yaml`` names by their docker-compose hostnames. Unset = URLs used as-is.
 """
 
 import os
 from pathlib import Path
 from typing import Any, Dict
+from urllib.parse import urlsplit, urlunsplit
 from dotenv import load_dotenv
 import yaml
+
+from shared.logger import get_logger
+
+logger = get_logger("api-gateway")
 
 
 # Directories
@@ -40,7 +49,38 @@ def load_service_config() -> Dict[str, Any]:
         raise FileNotFoundError(f"Config file not found: {config_path}")
     with open(config_path, 'r') as file:
         data = yaml.safe_load(file)
-    return data.get("services",{})
+    services = data.get("services",{})
+    return apply_upstream_host_override(services, os.getenv("GATEWAY_UPSTREAM_HOST", "").strip())
+
+
+def apply_upstream_host_override(services: Dict[str, Any], host: str) -> Dict[str, Any]:
+    """Replace the hostname of each service ``url`` with ``host``, keeping scheme, port and path.
+
+    Why: ``services.yaml`` uses docker-compose hostnames (``auth-service`` ...), which
+    do not resolve when every service runs locally on Windows. Overriding by env keeps
+    the YAML Docker-ready while letting a local launcher point the gateway at
+    ``127.0.0.1``. Only the host changes, so routes and the ``protected`` flags are
+    untouched.
+
+    Args:
+        services: Service table loaded from ``services.yaml`` (modified in place).
+        host: Replacement hostname; empty string means no override.
+
+    Returns:
+        The same ``services`` mapping, for chaining.
+    """
+    if not host:
+        return services
+    for name, cfg in services.items():
+        url = cfg.get("url") if isinstance(cfg, dict) else None
+        if not url:
+            continue
+        parts = urlsplit(url)
+        netloc = f"{host}:{parts.port}" if parts.port else host
+        cfg["url"] = urlunsplit(parts._replace(netloc=netloc))
+        # Upstream URLs carry no credentials, so logging them is safe.
+        logger.info("Upstream override service=%s url=%s", name, cfg["url"])
+    return services
 
 # SECURITY: JWT_SECRET_KEY must match the auth service's secret. Fail fast at import
 # time instead of silently verifying tokens against an empty key (value is never printed).

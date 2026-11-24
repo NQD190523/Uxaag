@@ -25,9 +25,10 @@ def _on_task_done(task: asyncio.Task) -> None:
         return
     exc = task.exception()
     if exc is not None:
-        logger.error(
-            "Background task %s failed: %s", task.get_name(), exc, exc_info=exc
-        )
+        # exc_info=exc keeps the traceback (we are outside an ``except`` block here,
+        # so ``logger.exception`` would find no active exception). The request id in
+        # the line is the one of the code that spawned the task.
+        logger.error("Background task failed task=%s", task.get_name(), exc_info=exc)
 
 
 def spawn_background_task(coro: Coroutine[Any, Any, Any], name: str) -> asyncio.Task:
@@ -40,6 +41,8 @@ def spawn_background_task(coro: Coroutine[Any, Any, Any], name: str) -> asyncio.
     Returns:
         The created task (callers normally ignore it).
     """
+    # Why: asyncio.create_task copies the current contextvars, so the new task logs
+    # with the same request id / user id as the code that spawned it (log tracing).
     task = asyncio.create_task(coro, name=name)
     _background_tasks.add(task)
     task.add_done_callback(_on_task_done)

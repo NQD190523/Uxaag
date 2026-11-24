@@ -40,7 +40,7 @@ class WebSocketService:
             self.active_connections[key] = set()
 
         self.active_connections[key].add(websocket)
-        logger.info(f"Client connected to room {key} | Total: {len(self.active_connections[key])}")
+        logger.debug("Socket registered room_id=%s total=%d", key, len(self.active_connections[key]))
 
     def disconnect(self, websocket: WebSocket, room_id: str):
         """Unregister a socket; drop the room entry when its last socket leaves.
@@ -53,9 +53,9 @@ class WebSocketService:
 
             if not self.active_connections[key]:
                 del self.active_connections[key]
-                logger.info(f"Room {key} is now empty and removed")
+                logger.debug("Room has no sockets left room_id=%s", key)
             else:
-                logger.info(f"Client disconnected from room {key} | Remaining: {len(self.active_connections[key])}")
+                logger.debug("Socket unregistered room_id=%s remaining=%d", key, len(self.active_connections[key]))
 
     async def broadcast(self, message: str, room_id: str):
         """Send a text frame to every socket in one room.
@@ -69,7 +69,7 @@ class WebSocketService:
         """
         key = self._room_key(room_id)
         if key not in self.active_connections:
-            logger.warning(f"Broadcast skipped: Room {key!r} has no active connections")
+            logger.debug("Broadcast skipped: no sockets room_id=%s", key)
             return
 
         # Make a copy to avoid modification during iteration
@@ -80,7 +80,7 @@ class WebSocketService:
             try:
                 await connection.send_text(message)
             except Exception as e:
-                logger.error(f"Failed to send to client in room {key}: {e}")
+                logger.warning("Socket send failed, dropping it room_id=%s error=%s", key, type(e).__name__)
                 disconnected.append(connection)
 
         # Clean up dead connections
@@ -88,7 +88,7 @@ class WebSocketService:
             self.disconnect(conn, key)
 
         n = len(connections) - len(disconnected)
-        logger.info(f"Broadcast to {n} client(s) in room {key}")
+        logger.debug("Broadcast done room_id=%s delivered=%d", key, n)
 
     async def broadcast_all(self, message: str):
         """Send a text frame to every socket in every room on this process.
@@ -104,7 +104,7 @@ class WebSocketService:
             after = len(self.active_connections.get(room_id, set()))
             # Approximate delivered count (sockets that survived the send).
             total_sent += after if after <= before else before
-        logger.info(f"Global broadcast delivered to {total_sent} client(s)")
+        logger.debug("Global broadcast done delivered=%d", total_sent)
 
 
 websocket_service = WebSocketService()

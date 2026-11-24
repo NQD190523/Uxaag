@@ -46,10 +46,9 @@ class UserRepository(AsyncBaseRepository):
             result = await self.session.execute(
                 select(User).where(User.username == username)
             )
-            logger.info("Fetched user by username")
             return result.scalar_one_or_none()
         except Exception as e:
-            logger.error("Failed to get user by username: %s", e)
+            logger.debug("User lookup by username failed")
             raise
     
     async def get_user_by_email(self, email: str) -> Optional[User]:
@@ -59,15 +58,13 @@ class UserRepository(AsyncBaseRepository):
             The user, or None if not found. NOTE: DB errors are also swallowed and
             returned as None, so callers cannot tell "missing" from "DB failure".
         """
-        logger.info("Attempting to fetch user by email")
         try:
             result = await self.session.execute(
                 select(User).where(User.email == email)
             )
-            logger.info("Fetched user by email")
             return result.scalar_one_or_none()
         except Exception as e:
-            logger.error("Failed to get user by email: %s", e)
+            logger.debug("User lookup by email failed")
             return None
     
     async def get_user_by_id(self, user_id: int) -> Optional[User]:
@@ -81,10 +78,9 @@ class UserRepository(AsyncBaseRepository):
             result = await self.session.execute(
                 select(User).where(User.user_id == user_id)
             )
-            logger.info(f"Fetched user by id: {user_id}")
             return result.scalar_one_or_none()
         except Exception as e:
-            logger.error(f"Failed to get user by id {user_id}: {str(e)}")
+            logger.debug("User lookup by id failed user_id=%s", user_id)
     
     async def create_user(self, user_data: User) -> User:
         """Insert a new user and commit.
@@ -102,7 +98,7 @@ class UserRepository(AsyncBaseRepository):
             return user_data
         except Exception as e:
             await self.session.rollback()
-            logger.error(f"Failed to create user: {str(e)}")
+            logger.debug("User create failed")
             raise
     
     async def update_user(self, user_id: int, update_data: Dict[str, Any]) -> bool:
@@ -127,7 +123,7 @@ class UserRepository(AsyncBaseRepository):
             return result.rowcount > 0
         except Exception as e:
             await self.session.rollback()
-            logger.error(f"Failed to update user {user_id}: {str(e)}")
+            logger.debug("User update failed user_id=%s", user_id)
             raise
     
     async def delete_user(self, user_id: int) -> bool:
@@ -140,7 +136,7 @@ class UserRepository(AsyncBaseRepository):
             return result.rowcount > 0
         except Exception as e:
             await self.session.rollback()
-            logger.error(f"Failed to delete user {user_id}: {str(e)}")
+            logger.debug("User delete failed user_id=%s", user_id)
             raise
     
     async def update_last_login(self, user_id: int) -> bool:
@@ -155,7 +151,7 @@ class UserRepository(AsyncBaseRepository):
             return result.rowcount > 0
         except Exception as e:
             await self.session.rollback()
-            logger.error(f"Failed to update last login for user {user_id}: {str(e)}")
+            logger.debug("Last-login update failed user_id=%s", user_id)
             raise
         
     async def get_matching_users(self, search_query: str) -> List[User]:
@@ -184,5 +180,5 @@ class UserRepository(AsyncBaseRepository):
             users = result.scalars().all()
             return users
         except Exception as e:
-            logger.error(f"Failed to get matching users: {str(e)}")
+            logger.debug("Matching-users query failed")
             raise

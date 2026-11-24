@@ -48,7 +48,7 @@ async def gateway_router(request: Request, service: str):
     parts = path_str.split("/", 1)
     service_name = parts[0] if parts else ""
 
-    logger.debug("Routing request to service %r", service_name)
+    logger.debug("Routing request: service=%s", service_name)
 
     if service_name not in SERVICES:
         raise HTTPException(status_code=404, detail="Service not found or not configured.")

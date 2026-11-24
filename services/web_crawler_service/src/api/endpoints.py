@@ -13,12 +13,11 @@ from fastapi import APIRouter, HTTPException, status, BackgroundTasks
 from pydantic import BaseModel, Field, HttpUrl
 from typing import Optional, List, Dict, Any
 from datetime import datetime
-import logging
 
 from shared.logger import get_logger
 from services.web_crawler import WebCrawler
 
-logger = get_logger(__name__)
+logger = get_logger("web-crawler-service")
 
 # Create router
 router = APIRouter(prefix="/crawl", tags=["crawl"])
@@ -126,7 +125,7 @@ async def start_crawl(request: CrawlRequest):
         )
     
     except Exception as e:
-        logger.error(f"Web crawling failed: {str(e)}")
+        logger.exception("Crawl failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Web crawling failed: {str(e)}"
@@ -195,7 +194,7 @@ async def start_crawl_async(
                 })
             
             except Exception as e:
-                logger.error(f"Background crawl failed: {str(e)}")
+                logger.exception("Background crawl failed: job_id=%s", job_id)
                 crawl_jobs[job_id]["status"] = "failed"
                 crawl_jobs[job_id]["error"] = str(e)
         
@@ -209,7 +208,7 @@ async def start_crawl_async(
         }
     
     except Exception as e:
-        logger.error(f"Failed to start async crawl: {str(e)}")
+        logger.exception("Start async crawl failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to start async crawl: {str(e)}"
@@ -244,7 +243,7 @@ async def get_crawl_status(job_id: str):
         )
     
     except Exception as e:
-        logger.error(f"Failed to get crawl status: {str(e)}")
+        logger.exception("Get crawl status failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get crawl status: {str(e)}"
@@ -286,7 +285,7 @@ async def get_crawl_results(job_id: str):
         }
     
     except Exception as e:
-        logger.error(f"Failed to get crawl results: {str(e)}")
+        logger.exception("Get crawl results failed")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to get crawl results: {str(e)}"
@@ -307,7 +306,7 @@ async def health_check():
             "active_jobs": len([j for j in crawl_jobs.values() if j.get("status") in ["pending", "running"]])
         }
     except Exception as e:
-        logger.error(f"Health check failed: {str(e)}")
+        logger.exception("Health check failed")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Web crawler service is unhealthy"

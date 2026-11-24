@@ -78,7 +78,7 @@ class ChatService:
                 chat_room_model, chat_participant_model
             )
         except Exception as e:
-            self.logger.error(f"Failed to create chat room: {str(e)}")
+            self.logger.debug("Failed to create chat room")
             raise
     
     async def get_chat_room_by_id(self, chat_room_id: int, session: AsyncSession):
@@ -92,7 +92,7 @@ class ChatService:
             chat_room = await chat_repository.get_chat_room_by_id(chat_room_id)
             return ChatRoom(chat_room_id=chat_room.chat_room_id, chat_room_name=chat_room.chat_room_name, created_at=chat_room.created_at)
         except Exception as e:
-            self.logger.error(f"Failed to get chat room by ID: {str(e)}")
+            self.logger.debug("Failed to get chat room by ID")
             raise
     
     async def get_all_user_chat_rooms(self, user_id: int, session: AsyncSession)-> List[chatRoom]:
@@ -102,7 +102,7 @@ class ChatService:
             rooms: List[chatRoom] = await chat_repository.get_all_user_chat_rooms(user_id=user_id)
             return rooms
         except Exception as e:
-            self.logger.error(f"Failed to get all user chat rooms: {str(e)}")
+            self.logger.debug("Failed to get all user chat rooms")
             raise
     
     async def get_chat_messages_by_chat_room_id(self, chat_room_id: int, session: AsyncSession) -> List[ChatMessageResponse]:
@@ -123,7 +123,7 @@ class ChatService:
                 for message in messages
             ]
         except Exception as e:
-            self.logger.error(f"Failed to get chat messages by chat room ID: {str(e)}")
+            self.logger.debug("Failed to get chat messages by chat room ID")
             raise
     
     async def get_chat_room_participants(self, chat_room_id: int, session: AsyncSession) -> List[ChatParticipantResponse]:  
@@ -161,7 +161,7 @@ class ChatService:
                 for participant in participants
             ]
         except Exception as e:
-            self.logger.error(f"Failed to get chat room participants: {str(e)}")
+            self.logger.debug("Failed to get chat room participants")
             raise
 
     async def get_current_user_chat_room_status(
@@ -214,29 +214,19 @@ class ChatService:
             (errors are logged and swallowed so the history endpoint still works).
         """
         try:
-            self.logger.info(f"[last-message] service start room={chat_room_id}")
             chat_repository: ChatRepository = ChatRepository(session=session)
             latest = await chat_repository.get_latest_chat_message_by_chat_room_id(
                 chat_room_id=chat_room_id
             )
             if not latest:
-                self.logger.info(f"[last-message] service no-latest room={chat_room_id}")
                 return None
             preview = LastMessagePreviewResponse(
                 message=latest.message,
                 created_at=latest.created_at,
             )
-            self.logger.info(
-                f"[last-message] service preview room={chat_room_id} "
-                f"length={len(preview.message or '')} created_at={preview.created_at!r}"
-            )
-            # Message content may be private: DEBUG level only.
-            self.logger.debug(
-                f"[last-message] service preview text={preview.message!r}"
-            )
             return preview
         except Exception as e:
-            self.logger.error(f"Failed to get chat room last-message preview: {str(e)}")
+            self.logger.exception("Failed to get chat room last-message preview")
             return None
     
     async def create_chat_message(self, chat_message: ChatMessage, session: AsyncSession):
@@ -270,7 +260,7 @@ class ChatService:
             chat_message_created = await chat_repository.create_chat_message(chat_message_model)
             return chat_message_created
         except Exception as e:
-            self.logger.error(f"Failed to create chat message: {str(e)}")
+            self.logger.debug("Failed to create chat message")
             raise
     
     async def is_participant(
@@ -375,18 +365,16 @@ class ChatService:
                     # created_at/updated_at: model defaults (naive local time).
                 )
                 created = await chat_repository.create_chat_message(row)
-            # INFO logs ids and length only; content goes to DEBUG.
+            # Ids and length only: message text is never logged.
             self.logger.info(
-                "Message saved to DB for room %s | role=%s | user_id=%s | length=%s",
+                "Message saved room_id=%s role=%s length=%d",
                 chat_room_id,
                 role,
-                user_id,
                 len(content or ""),
             )
-            self.logger.debug("Saved message text: %r", content)
             return created
         except Exception as e:
-            self.logger.error("Failed to save message to DB: %s", e)
+            self.logger.debug("Failed to save message room_id=%s", chat_room_id)
             raise
     
     async def add_user_to_chat_room(self, chat_room_id: int, user_id: int, session: AsyncSession):
@@ -395,8 +383,8 @@ class ChatService:
         Raises:
             ValueError: If the user already has a participant row in the room.
         """
-        # Note: the ValueError below is logged by the broad handler and re-raised
-        # unchanged; the router maps it to HTTP 400.
+        # Note: the ValueError below propagates unchanged; the router logs the one
+        # WARNING (no traceback) and maps it to HTTP 400.
         try:
             chat_repository: ChatRepository = ChatRepository(session=session)
             # Check if the user is already in the chat room
@@ -408,8 +396,11 @@ class ChatService:
             chat_participant_model = chatParticipant(chat_room_id=chat_room_id, user_id=user_id)
             chat_participant_created = await chat_repository.create_chat_participant(chat_participant_model)
             return chat_participant_created
+        except ValueError:
+            # Expected business rejection (already a member): not an error here.
+            raise
         except Exception as e:
-            self.logger.error(f"Failed to add user to chat room: {str(e)}")
+            self.logger.debug("Failed to add user to chat room")
             raise
     
     async def update_chat_room_last_message(self, chat_room_id: int, message: str, user_id: int) -> chatRoom:
@@ -437,7 +428,7 @@ class ChatService:
                     message=message,
                 )
         except Exception as e:
-            self.logger.error(f"Failed to update chat room last message: {str(e)}")
+            self.logger.debug("Failed to update chat room last message")
             raise
     
     

@@ -11,9 +11,15 @@ import os
 from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from shared.logger import get_logger, setup_logging
+from shared.request_logging import RequestLoggingMiddleware
 
 # Loads a .env from the current working directory (not from the service folder).
 load_dotenv()
+
+# Configure logging after dotenv (LOG_LEVEL/LOG_DIR) and before any local imports.
+setup_logging("web-crawler-service")
+logger = get_logger("web-crawler-service")
 
 
 def get_cors_origins() -> list[str]:
@@ -31,6 +37,9 @@ app = FastAPI(
     description="Web scraping and crawling service",
     version="1.0.0"
 )
+
+# One log line per HTTP request (id, user, status, duration).
+app.add_middleware(RequestLoggingMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -68,4 +77,6 @@ async def crawl_url():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8004, log_level="info")
+
+    # log_config=None keeps uvicorn from replacing the handlers set by setup_logging.
+    uvicorn.run(app, host="0.0.0.0", port=8004, log_config=None)

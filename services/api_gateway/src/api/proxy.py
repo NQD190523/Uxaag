@@ -7,9 +7,12 @@ response. Cross-service: calls whichever upstream service ``SERVICES`` maps to.
 
 from fastapi import HTTPException, Request, Response
 from fastapi.responses import StreamingResponse
+import time
+
 import httpx
 from core.config import SERVICES
 from core.security import require_auth
+from shared.log_context import REQUEST_ID_HEADER, bind_user, get_request_id
 from shared.logger import get_logger
 
 logger = get_logger("api-gateway")
@@ -24,6 +27,8 @@ _REQUEST_DROP_HEADERS = frozenset(
         "connection",
         "x-user-id",
         "x-user-email",
+        # Re-added once from the gateway's own (validated) request id, never duplicated.
+        "x-request-id",
     }
 )
 
@@ -37,6 +42,8 @@ _RESPONSE_DROP_HEADERS = frozenset(
         "connection",
         "content-encoding",
         "content-type",
+        # The gateway's RequestLoggingMiddleware adds X-Request-ID to every response.
+        "x-request-id",
     }
 )
 
@@ -71,6 +78,8 @@ async def proxy_request(request: Request, service: str) -> Response:
     payload = None
     if service.get("protected", True):
         payload = await require_auth(request)
+        # Tag every later log line of this request with the caller's id.
+        bind_user(payload.get("user_id") or payload.get("sub"))
     
     path = request.url.path
     if service.get("strip_prefix", True):
@@ -101,9 +110,14 @@ async def proxy_request(request: Request, service: str) -> Response:
         if email:
             headers["x-user-email"] = str(email)
 
+    # Forward the request id so downstream services log under the same id.
+    headers[REQUEST_ID_HEADER] = get_request_id()
+
     timeout = service.get("timeout", 30)
+    prefix_name = service.get("prefix")
+    started = time.perf_counter()
     # Log method + upstream path only (no headers, cookies or query string: they can carry tokens).
-    logger.debug("Proxying %s -> %s", request.method, url.split("?", 1)[0])
+    logger.debug("Proxying request: method=%s url=%s", request.method, url.split("?", 1)[0])
     async with httpx.AsyncClient(timeout=timeout) as client:
         try :
             resp = await client.request(
@@ -131,11 +145,17 @@ async def proxy_request(request: Request, service: str) -> Response:
             return proxy_response
 
         except httpx.TimeoutException:
+            logger.warning(
+                "Upstream timeout: 504 service=%s timeout_s=%s duration_ms=%d",
+                prefix_name, timeout, (time.perf_counter() - started) * 1000,
+            )
             raise HTTPException(status_code=504, detail="Upstream service timeout")
         except httpx.RequestError as e:
             # SECURITY: keep upstream hostnames/errors out of the client response.
             # Log only the route prefix: ``service`` is the whole config dict here.
+            # Only the exception class is logged (its text may contain the upstream URL).
             logger.error(
-                "Upstream request failed for %s: %s", service.get("prefix"), e
+                "Upstream request failed: 502 service=%s error=%s duration_ms=%d",
+                prefix_name, type(e).__name__, (time.perf_counter() - started) * 1000,
             )
             raise HTTPException(status_code=502, detail="Bad Gateway")

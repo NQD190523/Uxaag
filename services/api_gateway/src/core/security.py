@@ -76,19 +76,19 @@ class JWTBearer:
             # NOTE: core/config.py refuses to start without JWT_SECRET_KEY.
             payload = jwt.decode(jwt=token, key=JWT_SECRET_KEY, algorithms=[JWT_ALGORITHM])
         except ExpiredSignatureError:
-            logger.warning("Rejected token: expired")
+            logger.warning("Token rejected reason=%s", "expired")
             raise HTTPException(status_code=401, detail=_INVALID_TOKEN_DETAIL)
-        except InvalidTokenError as e:
-            logger.warning("Rejected token: invalid (%s)", e)
+        except InvalidTokenError:
+            logger.warning("Token rejected reason=%s", "invalid")
             raise HTTPException(status_code=401, detail=_INVALID_TOKEN_DETAIL)
-        except Exception as e:
-            logger.warning("Rejected token: unexpected decode error (%s)", e)
+        except Exception:
+            logger.warning("Token rejected reason=%s", "decode_error")
             raise HTTPException(status_code=401, detail=_INVALID_TOKEN_DETAIL)
 
         # The auth service issues type=access|refresh; only access tokens may call APIs.
         if payload.get("type") != "access":
             logger.warning(
-                "Rejected token: type claim is %r, expected 'access'", payload.get("type")
+                "Token rejected reason=%s type=%s", "wrong_type", payload.get("type")
             )
             raise HTTPException(status_code=401, detail=_INVALID_TOKEN_DETAIL)
         return payload

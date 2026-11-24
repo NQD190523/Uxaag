@@ -77,7 +77,7 @@ async def handle_ws_user_send_message(
         user_id_int = int(user_id)
     except (TypeError, ValueError):
         logger.warning(
-            "Skipping DB persistence: non-numeric ids (room=%r, user=%r)",
+            "Message not persisted: non-numeric ids room_id=%s user_id=%s",
             chat_room_id,
             user_id,
         )
@@ -106,8 +106,8 @@ async def handle_ws_user_send_message(
         await redis_client.publish(CHAT_LIST_UPDATES_CHANNEL, last_message_outbound)
     except Exception as pub_err:
         logger.warning(
-            "Redis publish failed (chat list updates will not propagate): %s",
-            pub_err,
+            "Redis publish failed, chat list updates will not propagate error=%s",
+            type(pub_err).__name__,
         )
 
     if is_model_prompt and llm_followup_enabled():

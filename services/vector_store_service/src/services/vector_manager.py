@@ -6,11 +6,12 @@ router that would use it is not mounted. A real implementation would call an emb
 model and persist to a vector database.
 """
 
-import logging
 from typing import List, Dict, Any, Optional
 import uuid
 
-logger = logging.getLogger(__name__)
+from shared.logger import get_logger
+
+logger = get_logger("vector-store-service")
 
 
 class VectorStoreManager:
@@ -28,7 +29,7 @@ class VectorStoreManager:
     
     async def initialize(self):
         """Async startup hook; currently only logs (a real backend would connect here)."""
-        logger.info("Vector Store Manager initialized")
+        logger.info("Vector store manager initialized")
     
     def _ensure_collection(self, collection_name: str):
         """Ensure a collection exists."""
@@ -77,11 +78,11 @@ class VectorStoreManager:
                 
                 doc_ids.append(doc_id)
             
-            logger.info(f"Stored {len(doc_ids)} documents in collection '{collection}'")
+            logger.info("Documents stored: collection=%s count=%d", collection, len(doc_ids))
             return doc_ids
         
         except Exception as e:
-            logger.error(f"Failed to store documents: {str(e)}")
+            logger.exception("Store documents failed: collection=%s", collection)
             raise
     
     async def search_documents(
@@ -104,7 +105,7 @@ class VectorStoreManager:
         """
         try:
             if collection not in self.collections:
-                logger.warning(f"Collection '{collection}' not found")
+                logger.warning("Search skipped: reason=collection_not_found collection=%s", collection)
                 return []
             
             # Generate mock embedding for query
@@ -132,11 +133,11 @@ class VectorStoreManager:
             # Sort by similarity and limit results
             results.sort(key=lambda x: x["similarity"], reverse=True)
             
-            logger.info(f"Found {len(results)} documents matching query in collection '{collection}'")
+            logger.info("Documents searched: collection=%s matches=%d", collection, len(results))
             return results[:limit]
         
         except Exception as e:
-            logger.error(f"Document search failed: {str(e)}")
+            logger.exception("Search documents failed: collection=%s", collection)
             raise
     
     async def delete_documents(
@@ -166,11 +167,11 @@ class VectorStoreManager:
                     del documents[doc_id]
                     deleted_count += 1
             
-            logger.info(f"Deleted {deleted_count} documents from collection '{collection}'")
+            logger.info("Documents deleted: collection=%s count=%d", collection, deleted_count)
             return deleted_count
         
         except Exception as e:
-            logger.error(f"Failed to delete documents: {str(e)}")
+            logger.exception("Delete documents failed: collection=%s", collection)
             raise
     
     async def get_document(
@@ -207,7 +208,7 @@ class VectorStoreManager:
             return None
         
         except Exception as e:
-            logger.error(f"Failed to get document {doc_id}: {str(e)}")
+            logger.exception("Get document failed: collection=%s doc_id=%s", collection, doc_id)
             raise
     
     async def list_documents(
@@ -256,7 +257,7 @@ class VectorStoreManager:
             }
         
         except Exception as e:
-            logger.error(f"Failed to list documents: {str(e)}")
+            logger.exception("List documents failed: collection=%s", collection)
             raise
     
     def _generate_mock_embedding(self, text: str) -> List[float]:
@@ -300,7 +301,7 @@ class VectorStoreManager:
         try:
             if collection in self.collections:
                 self.collections[collection]["documents"].clear()
-                logger.info(f"Cleared collection '{collection}'")
+                logger.info("Collection cleared: collection=%s", collection)
         except Exception as e:
-            logger.error(f"Failed to clear collection: {str(e)}")
+            logger.exception("Clear collection failed: collection=%s", collection)
             raise

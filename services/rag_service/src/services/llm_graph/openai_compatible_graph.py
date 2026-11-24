@@ -8,20 +8,20 @@ OpenAI REST shape. The name is kept to avoid breaking imports.
 
 from __future__ import annotations
 
-import logging
+import time
 from typing import Any, NotRequired, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_ollama import ChatOllama
 from langgraph.graph import END, START, StateGraph
+from shared.logger import get_logger
 
 from services.llm_graph.config import (
     LLMConnectionSettings,
-    describe_llm_settings,
     load_llm_settings,
 )
 
-logger = logging.getLogger(__name__)
+logger = get_logger("rag-service")
 
 
 # --- State shape: one dictionary that every graph step reads and updates -----------------
@@ -50,7 +50,13 @@ def _build_chat_model(settings: LLMConnectionSettings) -> ChatOllama:
     """
 
     # This object knows how to serialize messages and parse the JSON response from the API.
-    logger.info("rag llm init | %s", describe_llm_settings(settings))
+    # Model and sampling only: base URL and API key stay out of the logs.
+    logger.info(
+        "LLM client created model=%s temperature=%s num_predict=%s",
+        settings.model,
+        settings.temperature,
+        settings.num_predict,
+    )
     # For cloud/proxied endpoints, send Bearer token when configured.
     client_kwargs: dict[str, Any] = {}
     if (settings.api_key or "").strip():
@@ -126,19 +132,27 @@ def _make_model_node(llm: ChatOllama):
         lc_messages = _messages_from_state(state)
 
         # `ainvoke` runs the HTTP request in async mode so FastAPI stays non-blocking.
-        logger.info(
-            "rag llm call | has_system_prompt=%s | user_message_len=%s",
-            bool((state.get("system_prompt") or "").strip()),
-            len(state.get("user_message") or ""),
-        )
+        # Prompt and reply text are never logged: only model, timing and sizes.
+        started = time.perf_counter()
         try:
             ai_message = await llm.ainvoke(lc_messages)
         except Exception:
-            logger.exception("rag llm provider call failed")
+            logger.exception(
+                "LLM call failed model=%s duration_ms=%.0f",
+                llm.model,
+                (time.perf_counter() - started) * 1000,
+            )
             raise
 
+        reply = _extract_text(ai_message)
+        logger.info(
+            "LLM call finished model=%s duration_ms=%.0f reply_chars=%d",
+            llm.model,
+            (time.perf_counter() - started) * 1000,
+            len(reply),
+        )
         # Store only the assistant text in state for the next node or the final result.
-        return {"assistant_reply": _extract_text(ai_message)}
+        return {"assistant_reply": reply}
 
     return call_remote_model
 
@@ -219,11 +233,8 @@ async def run_llm_graph(
         The model reply, stripped; empty string if the model returned nothing.
 
     Raises:
-        Exception: Provider/network errors are logged and re-raised; routers map them to 502.
+        Exception: Provider/network errors are logged by the model node and re-raised; routers map them to 502.
     """
-
-    effective = settings or load_llm_settings()
-    logger.info("rag llm run | %s", describe_llm_settings(effective))
 
     # Reuse one compiled graph per process unless the caller passed explicit settings.
     graph = get_compiled_llm_graph(settings)
@@ -234,11 +245,8 @@ async def run_llm_graph(
         initial["system_prompt"] = system_prompt
 
     # Run the whole graph asynchronously and read the final merged state.
-    try:
-        final_state = await graph.ainvoke(initial)
-    except Exception:
-        logger.exception("rag llm graph execution failed")
-        raise
+    # Failures are already logged with traceback by the model node; just propagate.
+    final_state = await graph.ainvoke(initial)
 
     # The node wrote the model output under this key.
     return (final_state.get("assistant_reply") or "").strip()

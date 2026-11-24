@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 import os
 from pathlib import Path
 import re
+import time
 from uuid import uuid4
 
 from fastapi import HTTPException, UploadFile, status
@@ -136,7 +137,6 @@ class LightweightPdfMarkdownConverter:
         Raises:
             HTTPException: 413 if the upload exceeds ``max_upload_size_bytes`` (partial file is deleted).
         """
-        self.logger.info("Saving uploaded PDF to disk: %s", target_path)
         total_size = 0
         with target_path.open("wb") as out_file:
             while True:
@@ -147,6 +147,10 @@ class LightweightPdfMarkdownConverter:
                 if total_size > self.max_upload_size_bytes:
                     out_file.close()
                     target_path.unlink(missing_ok=True)
+                    self.logger.warning(
+                        "Upload rejected: reason=too_large limit_bytes=%d",
+                        self.max_upload_size_bytes,
+                    )
                     raise HTTPException(
                         status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
                         detail=f"Max size exceeded. Maximum allowed PDF size is {self.max_upload_size_bytes} bytes.",
@@ -154,7 +158,7 @@ class LightweightPdfMarkdownConverter:
                 out_file.write(chunk)
         # Rewind the upload so later readers of the same ``UploadFile`` start from the beginning.
         await upload_file.seek(0)
-        self.logger.info("PDF saved successfully. bytes=%s path=%s", total_size, target_path)
+        self.logger.debug("PDF stored: bytes=%d file=%s", total_size, target_path.name)
 
     @staticmethod
     def _post_process_markdown(markdown: str, source_name: str, total_pages: int) -> str:
@@ -204,7 +208,7 @@ class LightweightPdfMarkdownConverter:
             with fitz.open(str(pdf_path)) as document:
                 return int(document.page_count)
         except Exception as exc:
-            self.logger.exception("Failed to read PDF page count for %s", pdf_path)
+            self.logger.exception("PDF page count failed: file=%s", pdf_path.name)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail=f"Unable to read PDF: {exc!s}",
@@ -239,7 +243,7 @@ class LightweightPdfMarkdownConverter:
         try:
             markdown = self._extract_text_markdown(pdf_path)
         except Exception as exc:
-            self.logger.exception("PyMuPDF conversion failed for %s", pdf_path)
+            self.logger.exception("PDF conversion failed: file=%s", pdf_path.name)
             raise HTTPException(
                 status_code=status.HTTP_502_BAD_GATEWAY,
                 detail=f"PDF to markdown conversion failed: {exc!s}",
@@ -251,9 +255,9 @@ class LightweightPdfMarkdownConverter:
         """Best-effort delete of a stored PDF after a failed conversion; failures are only logged."""
         try:
             pdf_path.unlink(missing_ok=True)
-            self.logger.info("Removed stored PDF after failed conversion: %s", pdf_path)
+            self.logger.info("Orphan PDF removed after failed conversion: file=%s", pdf_path.name)
         except OSError:
-            self.logger.warning("Could not remove stored PDF %s", pdf_path, exc_info=True)
+            self.logger.warning("Orphan PDF removal failed: file=%s", pdf_path.name, exc_info=True)
 
     async def convert_pdf_to_markdown(
         self,
@@ -276,17 +280,15 @@ class LightweightPdfMarkdownConverter:
                 large), 422 (no extractable text), 502 (conversion failed), 503 (PyMuPDF missing).
         """
         if not upload_file.filename or not upload_file.filename.lower().endswith(".pdf"):
+            self.logger.warning(
+                "Upload rejected: reason=not_pdf chat_room_id=%s", chat_room_id
+            )
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Only PDF files are supported.",
             )
 
-        self.logger.info(
-            "Starting lightweight PDF conversion. chat_room_id=%s filename=%s folder=%s",
-            chat_room_id,
-            upload_file.filename,
-            folder or "/",
-        )
+        started = time.perf_counter()
 
         timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
         base_name = self._safe_stem(upload_file.filename)
@@ -304,6 +306,11 @@ class LightweightPdfMarkdownConverter:
             markdown = self._post_process_markdown(raw_markdown, upload_file.filename, total_pages)
 
             if not markdown:
+                self.logger.warning(
+                    "PDF conversion rejected: reason=no_text chat_room_id=%s pages=%d",
+                    chat_room_id,
+                    total_pages,
+                )
                 raise HTTPException(
                     status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
                     detail="PDF conversion completed but no text content was extracted.",
@@ -314,7 +321,12 @@ class LightweightPdfMarkdownConverter:
             # Conversion failed after the PDF was stored: drop the orphan PDF (best effort).
             self._remove_stored_pdf(pdf_path)
             raise
-        self.logger.info("Final markdown written: %s", markdown_path)
+        self.logger.info(
+            "PDF converted chat_room_id=%s pages=%d duration_ms=%.0f",
+            chat_room_id,
+            total_pages,
+            (time.perf_counter() - started) * 1000,
+        )
 
         return ConversionResult(
             markdown=markdown,

@@ -8,14 +8,13 @@ service/router layers decide how to map them to HTTP errors.
 from typing import List
 from datetime import datetime
 import uuid
-from shared import logger
+from shared.logger import get_logger
 from sqlalchemy import bindparam, desc, select, text, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from models.chat import chatMessage, chatRoom, chatParticipant
 
-# Get configured logger
-logger = logger.get_logger("chat-service")
+logger = get_logger("chat-service")
 
 class AsyncBaseRepository:
     """Async repository base holding the ``AsyncSession`` passed in by the caller."""
@@ -35,7 +34,7 @@ class ChatRepository(AsyncBaseRepository):
             result = await self.session.exec(select(chatRoom).where(chatRoom.chat_room_id == chat_room_id))
             return result.one()
         except Exception as e:
-            logger.error(f"Failed to get chat room by ID: {str(e)}")
+            logger.debug("Failed to get chat room by ID")
             raise
     
     async def get_all_user_chat_rooms(self, user_id: int) -> List[chatRoom]:
@@ -59,7 +58,7 @@ class ChatRepository(AsyncBaseRepository):
             result = await self.session.execute(statement)
             return result.scalars().all()
         except Exception as e:
-            logger.error(f"Failed to get all user chat rooms: {str(e)}")
+            logger.debug("Failed to get all user chat rooms")
             raise
     
     async def create_chat_room(self, chat_room: chatRoom) -> chatRoom:
@@ -70,7 +69,7 @@ class ChatRepository(AsyncBaseRepository):
             await self.session.refresh(chat_room)
             return chat_room
         except Exception as e:
-            logger.error(f"Failed to create chat room: {str(e)}")
+            logger.debug("Failed to create chat room")
             raise
     
     async def create_chat_room_with_participant(
@@ -100,7 +99,7 @@ class ChatRepository(AsyncBaseRepository):
         except Exception as e:
             # Release the failed transaction so the session stays usable.
             await self.session.rollback()
-            logger.error(f"Failed to create chat room with participant: {str(e)}")
+            logger.debug("Failed to create chat room with participant")
             raise
 
     async def create_chat_participant(self, chat_participant: chatParticipant) -> chatParticipant:
@@ -111,7 +110,7 @@ class ChatRepository(AsyncBaseRepository):
             await self.session.refresh(chat_participant)
             return chat_participant
         except Exception as e:
-            logger.error(f"Failed to create chat participant: {str(e)}")
+            logger.debug("Failed to create chat participant")
             raise
     
     async def remove_user_from_chat_room(self, chat_participant: chatParticipant) -> chatParticipant:
@@ -121,7 +120,7 @@ class ChatRepository(AsyncBaseRepository):
             await self.session.commit()
             return chat_participant
         except Exception as e:
-            logger.error(f"Failed to remove user from chat room: {str(e)}")
+            logger.debug("Failed to remove user from chat room")
             raise
     
     async def delete_chat_room(self, chat_room_id: int) -> None:
@@ -147,7 +146,7 @@ class ChatRepository(AsyncBaseRepository):
             await self.session.delete(chat_room)
             await self.session.commit()
         except Exception as e:
-            logger.error(f"Failed to delete chat room: {str(e)}")
+            logger.debug("Failed to delete chat room")
             raise
     
     async def get_chat_messages_by_chat_room_id(self, chat_room_id: int) -> List[chatMessage]:
@@ -165,7 +164,7 @@ class ChatRepository(AsyncBaseRepository):
             result = await self.session.execute(statement)
             return result.scalars().all()
         except Exception as e:
-            logger.error(f"Failed to get chat messages by chat room ID: {str(e)}")
+            logger.debug("Failed to get chat messages by chat room ID")
             raise
 
     async def get_latest_chat_message_by_chat_room_id(self, chat_room_id: int) -> chatMessage | None:
@@ -174,7 +173,6 @@ class ChatRepository(AsyncBaseRepository):
         Ordered by ``created_at`` then ``chat_message_id`` to break ties.
         """
         try:
-            logger.info(f"[last-message] repo query start room={chat_room_id}")
             statement = (
                 select(chatMessage)
                 .where(chatMessage.chat_room_id == chat_room_id)
@@ -184,17 +182,10 @@ class ChatRepository(AsyncBaseRepository):
             result = await self.session.execute(statement)
             latest = result.scalars().first()
             if latest is None:
-                logger.info(f"[last-message] repo query result empty room={chat_room_id}")
                 return None
-            logger.info(
-                f"[last-message] repo query result room={chat_room_id} "
-                f"message_id={latest.chat_message_id} created_at={latest.created_at!r}"
-            )
-            # Message content may be private: DEBUG level only.
-            logger.debug(f"[last-message] repo text={latest.message!r}")
             return latest
         except Exception as e:
-            logger.error(f"Failed to get latest chat message by chat room ID: {str(e)}")
+            logger.debug("Failed to get latest chat message by chat room ID")
             raise
     
     async def create_chat_message(self, chat_message: chatMessage) -> chatMessage:
@@ -205,7 +196,7 @@ class ChatRepository(AsyncBaseRepository):
             await self.session.refresh(chat_message)
             return chat_message
         except Exception as e:
-            logger.error(f"Failed to create chat message: {str(e)}")
+            logger.debug("Failed to create chat message")
             raise
     
     async def get_chat_room_participants(self, chat_room_id: int) -> List[chatParticipant]:
@@ -218,7 +209,7 @@ class ChatRepository(AsyncBaseRepository):
             result = await self.session.execute(statement)
             return result.scalars().all()
         except Exception as e:
-            logger.error(f"Failed to get chat room participants: {str(e)}")
+            logger.debug("Failed to get chat room participants")
             raise
 
     async def get_chat_room_participant_by_user_id(self, chat_room_id: int, user_id: int) -> chatParticipant | None:
@@ -234,7 +225,7 @@ class ChatRepository(AsyncBaseRepository):
             result = await self.session.execute(statement)
             return result.scalars().first()
         except Exception as e:
-            logger.error(f"Failed to get chat room participant by user id: {str(e)}")
+            logger.debug("Failed to get chat room participant by user id")
             raise
 
     async def is_participant(self, chat_room_id: int, user_id: int) -> bool:
@@ -260,7 +251,7 @@ class ChatRepository(AsyncBaseRepository):
             result = await self.session.execute(statement)
             return result.first() is not None
         except Exception as e:
-            logger.error(f"Failed to check room membership: {str(e)}")
+            logger.debug("Failed to check room membership")
             raise
 
     async def get_user_presence_by_ids(self, user_ids: List[int]) -> dict[int, dict]:
@@ -288,7 +279,7 @@ class ChatRepository(AsyncBaseRepository):
             result = await self.session.execute(statement, {"user_ids": ids})
             return {int(row["user_id"]): dict(row) for row in result.mappings().all()}
         except Exception as e:
-            logger.error(f"Failed to get user presence by ids: {str(e)}")
+            logger.debug("Failed to get user presence by ids")
             raise
     
     async def update_chat_room_last_message(
@@ -324,5 +315,5 @@ class ChatRepository(AsyncBaseRepository):
             await self.session.commit()
             return await self.get_chat_room_by_id(chat_room_id)
         except Exception as e:
-            logger.error(f"Failed to update chat room last message: {str(e)}")
+            logger.debug("Failed to update chat room last message")
             raise

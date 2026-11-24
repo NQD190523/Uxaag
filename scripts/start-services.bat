@@ -46,9 +46,10 @@ echo   Auth Service:         http://localhost:8006
 echo.
 echo Each service is running in its own window.
 echo Close any window to stop that service.
-echo Logs are written to logs\*.log and logs\*.err.log
+echo Logs: logs\^<service^>\^<service^>.log (all) and .error.log (warnings/errors)
 echo To stream all logs in one console:
-echo   view-logs.bat
+echo   scripts\view-logs.bat          (all services)
+echo   scripts\view-logs.bat errors   (errors only)
 echo.
 pause
 exit /b 0
@@ -128,12 +129,14 @@ if /I "%name%"=="auth-service" (
 )
 
 echo [STARTING] %name% on port %port% using %mode%...
-if not exist "%ROOT_DIR%logs\%name%.log" type nul > "%ROOT_DIR%logs\%name%.log"
-if not exist "%ROOT_DIR%logs\%name%.err.log" type nul > "%ROOT_DIR%logs\%name%.err.log"
+REM Each service writes its own rotating logs to logs\%name%\ (shared.logger).
+REM stdout goes to nul (a copy would grow without limit); stderr only catches crashes
+REM that happen before logging is set up.
+if not exist "%ROOT_DIR%logs\%name%" mkdir "%ROOT_DIR%logs\%name%"
 if "%mode%"=="venv+poetry" (
-    start "RAG Chat Room Web - %name%" powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -Path '%abs_svc_dir%'; & '%venv_activate%'; & poetry run python '%entrypoint%' 1>>'%ROOT_DIR%logs\%name%.log' 2>>'%ROOT_DIR%logs\%name%.err.log'"
+    start "RAG Chat Room Web - %name%" powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -Path '%abs_svc_dir%'; & '%venv_activate%'; & poetry run python '%entrypoint%' 1>$null 2>>'%ROOT_DIR%logs\%name%\%name%.startup.log'"
 ) else (
-    start "RAG Chat Room Web - %name%" powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -Path '%abs_svc_dir%'; & '%venv_activate%'; python '%entrypoint%' 1>>'%ROOT_DIR%logs\%name%.log' 2>>'%ROOT_DIR%logs\%name%.err.log'"
+    start "RAG Chat Room Web - %name%" powershell -NoExit -NoProfile -ExecutionPolicy Bypass -Command "Set-Location -Path '%abs_svc_dir%'; & '%venv_activate%'; python '%entrypoint%' 1>$null 2>>'%ROOT_DIR%logs\%name%\%name%.startup.log'"
 )
 
 powershell -NoProfile -Command "$ok = $false; 1..10 | ForEach-Object { try { $r = Invoke-WebRequest -Uri '%health_url%' -UseBasicParsing -TimeoutSec 2; if ($r.StatusCode -eq 200) { $ok = $true; break } } catch {}; Start-Sleep -Seconds 1 }; if ($ok) { exit 0 } else { exit 1 }"
@@ -143,6 +146,6 @@ if %errorlevel%==0 (
 )
 
 echo [FAILED] %name% did not become healthy on %health_url% within timeout.
-echo          Check logs\%name%.log and logs\%name%.err.log
+echo          Check logs\%name%\%name%.startup.log and logs\%name%\%name%.error.log
 set /a failed_count+=1
 exit /b 1

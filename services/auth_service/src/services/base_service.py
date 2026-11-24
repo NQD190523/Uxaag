@@ -8,6 +8,8 @@ import logging
 from abc import ABC
 from typing import Generic, TypeVar
 
+from shared.logger import get_logger
+
 T = TypeVar("T")
 
 
@@ -24,23 +26,28 @@ class BaseService(ABC, Generic[T]):
         Args:
             logger: Logger instance for service logging
         """
-        self.logger = logger or logging.getLogger(self.__class__.__name__)
+        self.logger = logger or get_logger("auth-service")
 
-    def log_info(self, message: str) -> None:
-        """Log info message."""
-        self.logger.info(message)
+    def log_info(self, message: str, *args) -> None:
+        """Log an info message (``%s``-style ``args`` are optional)."""
+        self.logger.info(message, *args)
 
     def log_error(self, message: str, exception: Exception = None) -> None:
-        """Log error message."""
-        if exception:
-            self.logger.error(f"{message}: {str(exception)}")
+        """Log an error message with a traceback.
+
+        Pass ``exception`` or call from inside an ``except`` block so the traceback is
+        recorded, as required for ERROR lines by CODING_CONVENTIONS 4a.
+        """
+        if exception is not None:
+            self.logger.error(message, exc_info=exception)
         else:
-            self.logger.error(message)
+            # exc_info=True is a no-op outside an except block.
+            self.logger.error(message, exc_info=True)
 
-    def log_debug(self, message: str) -> None:
-        """Log debug message."""
-        self.logger.debug(message)
+    def log_debug(self, message: str, *args) -> None:
+        """Log a debug message (``%s``-style ``args`` are optional)."""
+        self.logger.debug(message, *args)
 
-    def log_warning(self, message: str) -> None:
-        """Log warning message."""
-        self.logger.warning(message)
+    def log_warning(self, message: str, *args) -> None:
+        """Log a warning message (``%s``-style ``args`` are optional)."""
+        self.logger.warning(message, *args)

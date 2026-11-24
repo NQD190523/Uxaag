@@ -48,7 +48,7 @@ async def run_llm_followup_and_broadcast(
         )
         reply = (data.get("reply") or "").strip()
         if not reply:
-            logger.warning("LLM gateway returned empty reply for room %s", chat_room_id)
+            logger.warning("LLM returned empty reply room_id=%s", chat_room_id)
             # Do not leave the room waiting for a reply that will never come.
             await websocket_service.broadcast(
                 message=build_llm_error_payload(
@@ -65,13 +65,14 @@ async def run_llm_followup_and_broadcast(
             created_at=now,
         )
         await websocket_service.broadcast(message=outbound, room_id=chat_room_id)
+        logger.info("LLM reply broadcast room_id=%s reply_length=%d", chat_room_id, len(reply))
         # Persist assistant response asynchronously, same non-blocking style as user
         # messages (tracked fire-and-forget; failures are logged by the helper).
         try:
             room_id_int = int(chat_room_id)
         except ValueError:
             logger.warning(
-                "Skipping DB persistence of LLM reply: non-numeric room id %r",
+                "LLM reply not persisted: non-numeric room_id=%s",
                 chat_room_id,
             )
             return
@@ -93,10 +94,8 @@ async def run_llm_followup_and_broadcast(
             ),
             name=f"update_last_message_llm:{chat_room_id}",
         )
-    except Exception as exc:
-        logger.exception(
-            "LLM request via API gateway failed for room %s: %s", chat_room_id, exc
-        )
+    except Exception:
+        logger.exception("LLM follow-up failed room_id=%s", chat_room_id)
         # Tell the room the assistant failed; the detail is generic on purpose so
         # internal errors (URLs, tokens) are not leaked to clients.
         try:
@@ -108,4 +107,8 @@ async def run_llm_followup_and_broadcast(
                 room_id=chat_room_id,
             )
         except Exception as broadcast_err:
-            logger.warning("Failed to broadcast llm_error: %s", broadcast_err)
+            logger.warning(
+                "Failed to broadcast llm_error room_id=%s error=%s",
+                chat_room_id,
+                type(broadcast_err).__name__,
+            )

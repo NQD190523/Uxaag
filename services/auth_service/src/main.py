@@ -13,25 +13,25 @@ from pathlib import Path
 from dotenv import load_dotenv
 
 # Load environment variables FIRST, before any imports that depend on them
-# Look for .env in the uxaag/ root: src/main.py -> src -> auth_service -> services -> uxaag.
-# (config.py separately reads auth_service/.env through pydantic-settings.)
-env_path = Path(__file__).resolve().parent.parent.parent.parent / ".env"
+# Load the service's own .env (src/main.py -> src -> auth_service), the same file
+# config.py reads via pydantic-settings. Why not uxaag/.env: os.environ beats
+# pydantic's env_file, so a shared root file silently overrode auth's settings
+# (e.g. a stale DATABASE_URL); each service is deployed with its own env.
+env_path = Path(__file__).resolve().parent.parent / ".env"
 load_dotenv(dotenv_path=env_path if env_path.exists() else None)
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from shared.logger import setup_logging, get_logger
-from api.endpoints import router
-from middleware.middleware import LoggingMiddleware
-from api.user import router as user_router
+from shared.logger import setup_logging
+from shared.request_logging import RequestLoggingMiddleware
 
-# Initialize logging
-setup_logging(
-    service_name="auth-service",
-    log_level="INFO",
-)
-logger = get_logger("auth-service")
+# Logging must be configured BEFORE local imports so their module-level loggers and
+# import-time messages use the shared handlers. Level comes from LOG_LEVEL.
+setup_logging("auth-service")
+
+from api.endpoints import router  # noqa: E402
+from api.user import router as user_router  # noqa: E402
 
 # Create FastAPI app
 app = FastAPI(
@@ -57,8 +57,9 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Add logging middleware
-app.add_middleware(LoggingMiddleware)
+# Added after CORS so it is the outermost middleware: it assigns/propagates
+# X-Request-ID and logs method, path, status and duration of every request.
+app.add_middleware(RequestLoggingMiddleware)
 
 # Include routers
 app.include_router(router, prefix="/api/v1")
@@ -75,7 +76,6 @@ async def health_check():
         JSON ``{"status": "healthy", "service": "auth-service", "version": ...}``
         with HTTP 200.
     """
-    logger.info("Health check called")
     return {
         "status": "healthy",
         "service": "auth-service",
@@ -90,5 +90,6 @@ if __name__ == "__main__":
         app,
         host="0.0.0.0",
         port=8006,
-        log_level="info",
+        # keep the shared handlers instead of uvicorn's own logging config
+        log_config=None,
     )

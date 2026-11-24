@@ -18,6 +18,9 @@ import os
 from pathlib import Path
 
 from fastapi import HTTPException, status
+from shared.logger import get_logger
+
+logger = get_logger("document-service")
 
 
 @dataclass(frozen=True)
@@ -83,12 +86,14 @@ class MarkdownFileStore:
 
         rel = Path(relative_path)
         if rel.is_absolute():
+            logger.warning("Path rejected: reason=absolute chat_room_id=%s", chat_room_id)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Absolute paths are not allowed.",
             )
 
         if ".." in rel.parts:
+            logger.warning("Path rejected: reason=traversal chat_room_id=%s", chat_room_id)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Path traversal is not allowed.",
@@ -99,6 +104,7 @@ class MarkdownFileStore:
         # Second check after ``resolve()`` also catches symlink escapes.
         root_resolved = room_root.resolve()
         if root_resolved not in full.parents and full != root_resolved:
+            logger.warning("Path rejected: reason=escapes_root chat_room_id=%s", chat_room_id)
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Invalid path.",

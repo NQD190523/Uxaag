@@ -6,14 +6,20 @@ It does not honor robots.txt and has no rate limiting or SSRF protection (any UR
 internal addresses, would be fetched).
 """
 
-import logging
 import asyncio
 from typing import List, Dict, Any, Set, Optional
 from urllib.parse import urljoin, urlparse
 import aiohttp
 from bs4 import BeautifulSoup
+from shared.logger import get_logger
 
-logger = logging.getLogger(__name__)
+logger = get_logger("web-crawler-service")
+
+
+def _safe_url(url: str) -> str:
+    """Return ``url`` without userinfo and query string, which may carry credentials or tokens."""
+    parts = urlparse(url)
+    return f"{parts.scheme}://{parts.hostname or ''}{parts.path}"
 
 
 class WebCrawler:
@@ -86,7 +92,7 @@ class WebCrawler:
             }
         
         except Exception as e:
-            logger.error(f"Crawling failed for {start_url}: {str(e)}")
+            logger.exception("Crawl failed: url=%s", _safe_url(start_url))
             return {
                 "start_url": start_url,
                 "pages_crawled": len(self.crawled_urls),
@@ -125,7 +131,8 @@ class WebCrawler:
         
         self.visited_urls.add(url)
         
-        logger.info(f"Crawling: {url} (depth: {depth})")
+        # Per-page detail is DEBUG: a crawl can visit hundreds of pages.
+        logger.debug("Crawling page: url=%s depth=%d", _safe_url(url), depth)
         
         try:
             # Extract page content
@@ -158,7 +165,7 @@ class WebCrawler:
                             )
         
         except Exception as e:
-            logger.error(f"Error crawling {url}: {str(e)}")
+            logger.exception("Crawl page failed: url=%s depth=%d", _safe_url(url), depth)
             self.errors.append({"url": url, "error": str(e), "depth": depth})
     
     async def extract_page_content(
@@ -205,17 +212,17 @@ class WebCrawler:
                         }
                     
                     elif response.status == 404:
-                        logger.warning(f"Page not found: {url}")
+                        logger.warning("Fetch skipped: reason=not_found url=%s", _safe_url(url))
                         return None
                     
                     else:
-                        logger.warning(f"HTTP {response.status} for {url}")
+                        logger.warning("Fetch failed: status=%s url=%s", response.status, _safe_url(url))
                         if attempt < self.max_retries - 1:
                             continue
                         return None
             
             except asyncio.TimeoutError:
-                logger.warning(f"Timeout fetching {url}, attempt {attempt + 1}/{self.max_retries}")
+                logger.warning("Fetch timeout: url=%s attempt=%d/%d", _safe_url(url), attempt + 1, self.max_retries)
                 if attempt < self.max_retries - 1:
                     # Back off longer after a timeout than after other errors (1 s).
                     await asyncio.sleep(2)
@@ -224,7 +231,10 @@ class WebCrawler:
                 return None
             
             except Exception as e:
-                logger.warning(f"Error fetching {url}, attempt {attempt + 1}/{self.max_retries}: {str(e)}")
+                logger.warning(
+                    "Fetch error: url=%s attempt=%d/%d error_type=%s",
+                    _safe_url(url), attempt + 1, self.max_retries, type(e).__name__,
+                )
                 if attempt < self.max_retries - 1:
                     await asyncio.sleep(1)
                     continue
@@ -280,7 +290,7 @@ class WebCrawler:
             return links[:50]  # Limit to 50 links per page
         
         except Exception as e:
-            logger.error(f"Failed to extract links from {base_url}: {str(e)}")
+            logger.exception("Link extraction failed: url=%s", _safe_url(base_url))
             return []
     
     async def clear_state(self):
@@ -288,4 +298,4 @@ class WebCrawler:
         self.visited_urls.clear()
         self.crawled_urls.clear()
         self.errors.clear()
-        logger.info("Crawler state cleared")
+        logger.debug("Crawler state cleared")
