@@ -9,6 +9,8 @@ maps them to HTTP codes.
 
 
 import logging
+import re
+import secrets
 from datetime import datetime, timedelta
 from typing import Any, Optional
 
@@ -18,6 +20,24 @@ from models.user import User
 from .base_service import BaseService
 from core.security import SecurityUtil
 from schemas.auth_schema import TokenResponse, UserRegistration, UserLogin, UserProfile, AuthResponse
+
+
+# Characters kept from the email local part when building a username handle.
+_HANDLE_UNSAFE = re.compile(r"[^a-z0-9._-]+")
+# Room for a "-1234" suffix inside the 100-char column, while keeping handles readable.
+_HANDLE_MAX_BASE = 30
+
+
+def _handle_base(email: str) -> str:
+    """Return a lower-case handle candidate from the email's local part.
+
+    ``"Nguyen.Duc+work@x.com"`` -> ``"nguyen.duc"``. The ``+tag`` is dropped (it is
+    usually a mail filter, not a name); anything outside ``[a-z0-9._-]`` is removed.
+    Falls back to ``"user"`` when nothing usable is left.
+    """
+    local = email.split("@", 1)[0].split("+", 1)[0].lower()
+    base = _HANDLE_UNSAFE.sub("", local).strip("._-")[:_HANDLE_MAX_BASE]
+    return base or "user"
 
 
 class AuthService(BaseService):
@@ -62,7 +82,7 @@ class AuthService(BaseService):
         try:
             # Validate registration data
             if not registration_data.email or not registration_data.password:
-                self.log_error("Invalid registration data: missing email or password")
+                self.log_warning("Registration rejected reason=%s", "missing_fields")
                 raise ValueError("Email and password are required")
             
             # Initialize UserRepository
@@ -71,12 +91,11 @@ class AuthService(BaseService):
             # Check if email already exists
             existing_user = await user_repository.get_user_by_email(registration_data.email)
             if existing_user:
-                self.log_error("Registration failed: email already exists")
+                self.log_warning("Registration rejected reason=%s", "email_exists")
                 raise ValueError("Email is already registered")
             
             # SECURITY: SHA-256 pre-hash + bcrypt; the plain password is never stored or logged.
             hashed_password = SecurityUtil.hash_password(registration_data.password)
-            self.log_debug("Password hashed for new user")
             
             # Ensure security_util is available
             if not self.security_util:
@@ -85,9 +104,9 @@ class AuthService(BaseService):
             # Prepare user data for database
             user_data = User(
                 email=registration_data.email,
-                # TODO(auth): username defaults to full_name, but username is UNIQUE, so two
-                # users with the same full name collide on insert; generate a unique one.
-                username=registration_data.full_name,
+                # Bug A7: username used to be full_name, which is UNIQUE, so two people
+                # with the same name could not both sign up.
+                username=await self._unique_username(registration_data.email, user_repository),
                 hashed_password=hashed_password,
                 full_name=registration_data.full_name,
                 is_active=True,
@@ -97,7 +116,6 @@ class AuthService(BaseService):
             
             # Create user in database
             created_user = await user_repository.create_user(user_data)
-            self.log_info("User registered successfully")
             
             # Create access token (JWT) and random opaque refresh token
             token_data = {
@@ -136,14 +154,42 @@ class AuthService(BaseService):
                 token=token
             )
             
-        except ValueError as ve:
-            self.log_error(f"Registration validation error: {str(ve)}")
+        except ValueError:
+            # Already logged above with a specific reason; the router maps it to 400.
             raise
         except Exception as e:
             # Unexpected failures propagate as-is so the router returns a generic
             # 500 instead of a 400 carrying raw internal error text.
-            self.log_error(f"Registration failed with unexpected error: {str(e)}")
+            # The router logs the single traceback (log once).
+            self.log_debug("Registration failed")
             raise
+
+    async def _unique_username(self, email: str, user_repository: UserRepository) -> str:
+        """Pick a free username handle for a new user, derived from their email.
+
+        Tries the plain handle (``duc``), then up to five ``duc-NNNN`` variants with a
+        random 4-digit suffix, then a ``duc-<8 hex>`` one that practically cannot be
+        taken.
+
+        Why random suffixes, not ``duc2``, ``duc3``: counting up needs one query per
+        existing duplicate and leaks how many accounts share the name.
+        Note: the check and the insert are separate, so two signups racing for the same
+        handle can still hit the UNIQUE constraint; the insert then fails like any other
+        DB error and the user can retry.
+
+        Args:
+            email: The new user's email.
+            user_repository: Repository bound to the request session.
+
+        Returns:
+            A username not currently in use.
+        """
+        base = _handle_base(email)
+        candidates = [base] + [f"{base}-{secrets.randbelow(9000) + 1000}" for _ in range(5)]
+        for candidate in candidates:
+            if await user_repository.get_user_by_username(candidate) is None:
+                return candidate
+        return f"{base}-{secrets.token_hex(4)}"
 
     async def login_user(self, login_data: UserLogin, session: Any) -> AuthResponse:
         """
@@ -170,29 +216,28 @@ class AuthService(BaseService):
             raise ValueError("SecurityUtil must be initialized in AuthService")
 
         if not login_data.email or not login_data.password:
-            self.log_error("Invalid login data: missing email or password")
+            self.log_warning("Login rejected reason=%s", "missing_fields")
             raise ValueError("Email and password are required")
 
         user_repository = UserRepository(session)
         db_user = await user_repository.get_user_by_email(login_data.email)
 
         if not db_user:
-            self.log_warning("Login failed: user not found")
+            self.log_warning("Login rejected reason=%s", "user_not_found")
             raise ValueError("Invalid email or password")
 
         # SECURITY: same generic error as for an unknown email (see docstring).
         is_valid = self.security_util.verify_password(login_data.password, db_user.hashed_password)
         if not is_valid:
-            self.log_warning("Login failed: invalid password")
+            self.log_warning("Login rejected reason=%s", "invalid_password")
             raise ValueError("Invalid email or password")
 
         if not getattr(db_user, "is_active", True):
-            self.log_warning("Login failed: inactive user")
+            self.log_warning("Login rejected reason=%s", "inactive_user")
             raise ValueError("Account is disabled")
 
         await user_repository.update_last_login(db_user.user_id)
         db_user.last_login = datetime.utcnow()
-        self.log_info("User logged in successfully")
 
         token_data = {
             "user_id": str(db_user.user_id),
@@ -238,7 +283,9 @@ class AuthService(BaseService):
         """
         Refresh an access token using an opaque refresh token (rotation).
 
-        Verification is by DB lookup only (token string must match stored value; no JWT decode).
+        Verification is by DB lookup only (no JWT decode): the row is found by
+        ``SecurityUtil.hash_refresh_token(token)``, or by the raw value for legacy rows
+        written before hashing.
         On success a new access token and a new refresh token are issued and the
         presented refresh token is revoked.
 
@@ -255,7 +302,8 @@ class AuthService(BaseService):
             AuthResponse with ``user=None`` and the new token pair.
 
         Raises:
-            ValueError: If the token is unknown, revoked or expired.
+            ValueError: If the token is unknown, revoked or expired, or its user
+                no longer exists or is disabled.
         """
         try:
             refresh_token_repo = RefreshTokenRepository(session)
@@ -268,9 +316,22 @@ class AuthService(BaseService):
             if refresh_token_record.expires_at < datetime.utcnow():
                 raise ValueError("Refresh token expired")
             
-            # Only user_id is re-issued here (no email/sub claims); the gateway accepts
-            # user_id or sub as the identity.
-            token_data = {"user_id": str(refresh_token_record.user_id)}
+            # Re-issue the same claims as login (user_id, email, sub) so a refreshed token
+            # is indistinguishable from a fresh one; the gateway injects x-user-email from
+            # it. Loading the user also stops a disabled or deleted account from
+            # refreshing its way past a ban.
+            db_user = await UserRepository(session).get_user_by_id(
+                int(refresh_token_record.user_id)
+            )
+            if db_user is None:
+                raise ValueError("User not found")
+            if not getattr(db_user, "is_active", True):
+                raise ValueError("Account is disabled")
+            token_data = {
+                "user_id": str(db_user.user_id),
+                "email": db_user.email,
+                "sub": str(db_user.user_id),
+            }
             access_token = self.security_util._create_access_token(token_data)
             new_refresh_token = SecurityUtil.generate_random_refresh_token()
             # New refresh token expiry (days), stored in DB
@@ -281,7 +342,8 @@ class AuthService(BaseService):
                 refresh_token_record.user_id, new_refresh_token, refresh_expires_at
             )
             await refresh_token_repo.update_last_used(refresh_token)
-            await refresh_token_repo.revoke_by_token(refresh_token_record.token)
+            # Raw token, not record.token: the repository only matches raw tokens.
+            await refresh_token_repo.revoke_by_token(refresh_token)
 
             return AuthResponse(
                 success=True,
@@ -294,8 +356,8 @@ class AuthService(BaseService):
                     expires_in=self.security_util.access_token_expire_minutes * 60,
                 ),
             )
-        except ValueError as ve:
-            self.log_error(f"Refresh token failed: {str(ve)}")
+        except ValueError:
+            # The router logs the rejection reason; no second line here.
             raise
     
     async def verify_refresh_token(self, session: Any, token: str) -> bool:
@@ -324,7 +386,8 @@ class AuthService(BaseService):
                 raise ValueError("Refresh token expired")
             return True
         except Exception as e:
-            self.log_error(f"Verify refresh token failed: {str(e)}")
+            # Expected rejection (invalid/revoked/expired): WARNING, no traceback.
+            self.log_warning("Refresh token rejected reason=%s", e)
             raise ValueError(f"Verify refresh token failed: {str(e)}")
     
     async def get_me(self, session: Any, user_id: int) -> UserProfile:
@@ -356,10 +419,10 @@ class AuthService(BaseService):
                 last_login=user.last_login
             )
             return userProfile
-        except ValueError as ve:
-            self.log_error(f"Get me failed: {str(ve)}")
+        except ValueError:
+            # The router logs the rejection reason; no second line here.
             raise
         except Exception as e:
             # Re-raise unexpected errors for the router's generic 500 handler.
-            self.log_error(f"Get me failed with unexpected error: {str(e)}")
+            self.log_debug("Profile fetch failed")
             raise

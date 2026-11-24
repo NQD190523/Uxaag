@@ -23,6 +23,7 @@ from schemas.chat import (
     ChatRoom,
     ChatRoomCreateRequest,
     LatestChatMessageResponse,
+    RoomMembershipResponse,
     UserChatRoomResponse,
 )
 from services.chat_service import ChatService
@@ -213,7 +214,6 @@ async def get_user_chat_rooms(
     Errors: 500 on any failure.
     """
     try:
-        logger.info("Getting user chat rooms for user_id: %s", user_id)
         rooms: List[chatRoom] = await chat_service.get_all_user_chat_rooms(
             user_id=user_id, session=session
         )
@@ -270,6 +270,42 @@ async def get_profile_user_chat_rooms(
         )
 
 
+@router.get(
+    "/rooms/{chat_room_id}/membership",
+    status_code=status.HTTP_200_OK,
+    response_model=RoomMembershipResponse,
+)
+async def get_room_membership(
+    chat_room_id: int,
+    session: AsyncSession = Depends(get_async_session),
+    user_id: int = Header(..., alias="x-user-id"),
+) -> RoomMembershipResponse:
+    """GET /chat/rooms/{chat_room_id}/membership: is the caller in this room?
+
+    Auth: ``x-user-id`` header (injected by the gateway from the verified JWT), so
+    a caller can only ask about itself.
+    Path: ``chat_room_id`` numeric room id (422 otherwise).
+    Response: 200 ``RoomMembershipResponse``; ``is_member`` is true only for an
+    active participant (same rule as the WebSocket and message history).
+    Errors: 500 on any failure.
+
+    Why 200 + bool instead of 403: callers (document-service) must tell "not a
+    member" apart from "chat-service failed" or an auth error from the
+    gateway, which a 403 from here would blur together.
+    """
+    try:
+        is_member = await chat_service.is_participant(chat_room_id, user_id, session)
+        return RoomMembershipResponse(
+            chat_room_id=chat_room_id, user_id=int(user_id), is_member=bool(is_member)
+        )
+    except Exception:
+        logger.exception("Membership check failed room_id=%s", chat_room_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error",
+        )
+
+
 @router.get("/messages/{chat_room_id}", response_model=ChatMessageHistoryResponse)
 async def get_chat_messages(
     chat_room_id: str,
@@ -285,7 +321,6 @@ async def get_chat_messages(
     participants, last_message, current_user_status).
     Errors: 400 non-numeric room id; 403 caller is not a participant; 500 otherwise.
     """
-    logger.info(f"[history] start room={chat_room_id}")
     try:
         try:
             room_id = int(chat_room_id)
@@ -301,14 +336,10 @@ async def get_chat_messages(
                 chat_room_id=room_id, session=session
             )
         )
-        logger.info(f"[history] messages_count room={room_id} count={len(messages)}")
         participants: List[ChatParticipantResponse] = (
             await chat_service.get_chat_room_participants(
                 chat_room_id=room_id, session=session
             )
-        )
-        logger.info(
-            f"[history] participants_count room={room_id} count={len(participants)}"
         )
         current_user_status = await chat_service.get_current_user_chat_room_status(
             chat_room_id=room_id,
@@ -319,9 +350,11 @@ async def get_chat_messages(
             chat_room_id=room_id,
             session=session,
         )
-        # The preview is message content, so only log whether one exists.
         logger.info(
-            f"[history] last_message room={room_id} present={last_message is not None}"
+            "Chat history loaded room_id=%s messages=%d participants=%d",
+            room_id,
+            len(messages),
+            len(participants),
         )
         return {
             "messages": messages,
@@ -332,6 +365,8 @@ async def get_chat_messages(
     except HTTPException:
         raise
     except NoResultFound as e:
+        # Logged once here (WARNING, no traceback) where it becomes a 404.
+        logger.warning("Chat room not found room_id=%s", room_id)
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(e))
     except ValueError as e:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
@@ -384,7 +419,7 @@ async def add_user_to_chat_room(
         raise
     except ValueError as e:
         # Covers "User already in chat room" and a non-integer body user_id.
-        logger.error(f"Invalid add-user request: {str(e)}")
+        logger.warning("Add user rejected room_id=%s reason=%s", room_id, e)
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
     except Exception as e:
         logger.exception("Failed to add user to chat room")

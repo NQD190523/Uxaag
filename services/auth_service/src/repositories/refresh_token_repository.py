@@ -8,9 +8,10 @@ commits and rolls back on error.
 from datetime import datetime
 from typing import Optional
 
-from sqlalchemy import select, update
+from sqlalchemy import and_, not_, or_, select, update
 
 from shared.logger import get_logger
+from core.security import SecurityUtil
 from models.user import RefreshToken
 
 from repositories.user_repository import AsyncBaseRepository
@@ -18,15 +19,39 @@ from repositories.user_repository import AsyncBaseRepository
 logger = get_logger("auth-service")
 
 
+def _matches(token: str):
+    """SQL condition matching the row of a RAW refresh token.
+
+    Matches the hashed form (every row written since hashing) or, for legacy rows that
+    still hold the raw token, the exact value.
+    SECURITY: the exact-value branch skips ``sha256:`` rows. Without that, a stored
+    digest read from a DB leak would itself work as a refresh token (it equals its
+    own row), which is exactly what hashing is meant to prevent. Callers must
+    therefore always pass the raw token, never ``record.token``.
+    TODO(security): drop the exact-value branch once legacy rows have expired
+    (refresh lifetime is 7 days, so after 2026-12-01).
+    """
+    return or_(
+        RefreshToken.token == SecurityUtil.hash_refresh_token(token),
+        and_(
+            RefreshToken.token == token,
+            not_(RefreshToken.token.startswith("sha256:")),
+        ),
+    )
+
+
 class RefreshTokenRepository(AsyncBaseRepository):
-    """Repository for refresh token storage and lookup."""
+    """Repository for refresh token storage and lookup.
+
+    Callers always pass the raw token; hashing happens here so it cannot be forgotten.
+    """
 
     async def create(self, user_id: int, token: str, expires_at: datetime) -> RefreshToken:
-        """Persist an opaque refresh token string for a user (exact value used for lookup on verify).
+        """Persist a refresh token for a user. Only its SHA-256 digest is stored.
 
         Args:
             user_id: Owner of the token.
-            token: Random opaque token string sent to the client.
+            token: Raw random token sent to the client (hashed before insert).
             expires_at: Expiry as a naive UTC datetime.
 
         Returns:
@@ -38,38 +63,33 @@ class RefreshTokenRepository(AsyncBaseRepository):
         try:
             record = RefreshToken(
                 user_id=user_id,
-                token=token,
+                token=SecurityUtil.hash_refresh_token(token),
                 expires_at=expires_at,
                 revoked=False,
             )
             self.session.add(record)
             await self.session.commit()
             await self.session.refresh(record)
-            logger.info(f"Refresh token created for user_id={user_id}")
+            logger.debug("Refresh token created user_id=%s", user_id)
             return record
         except Exception as e:
             await self.session.rollback()
-            logger.error(f"Failed to create refresh token: {str(e)}")
+            logger.debug("Refresh token create failed user_id=%s", user_id)
             raise
 
     async def get_by_token(self, token: str) -> Optional[RefreshToken]:
-        """Find a refresh token by its exact value (opaque random string stored at issue).
-
-        SECURITY: the token is stored and compared in plain text (not hashed), so a DB
-        leak exposes live refresh tokens.
-        TODO(security): store a hash of the token and compare hashes.
+        """Find the row for a raw refresh token (hashed match, or a legacy plain row).
 
         Returns:
             The matching row, or None if absent. DB errors are logged and also yield None.
         """
         try:
             result = await self.session.execute(
-                select(RefreshToken).where(RefreshToken.token == token)
+                select(RefreshToken).where(_matches(token))
             )
-            logger.info("Refresh token lookup by value for user_id completed")
             return result.scalar_one_or_none()
         except Exception as e:
-            logger.error(f"Failed to get refresh token: {str(e)}")
+            logger.debug("Refresh token lookup failed")
             return None
 
     async def revoke_by_token(self, token: str) -> bool:
@@ -84,15 +104,15 @@ class RefreshTokenRepository(AsyncBaseRepository):
         try:
             result = await self.session.execute(
                 update(RefreshToken)
-                .where(RefreshToken.token == token)
+                .where(_matches(token))
                 .values(revoked=True)
             )
             await self.session.commit()
-            logger.info("Refresh token revoked successfully")
+            logger.debug("Refresh token revoked")
             return result.rowcount > 0
         except Exception as e:
             await self.session.rollback()
-            logger.error(f"Failed to revoke refresh token: {str(e)}")
+            logger.debug("Refresh token revoke failed")
             raise
 
     async def revoke_all_for_user(self, user_id: int) -> int:
@@ -117,11 +137,11 @@ class RefreshTokenRepository(AsyncBaseRepository):
                 .values(revoked=True)
             )
             await self.session.commit()
-            logger.info("Revoked %s refresh token(s) for user_id=%s", result.rowcount, user_id)
+            logger.info("Refresh tokens revoked count=%s user_id=%s", result.rowcount, user_id)
             return result.rowcount
         except Exception as e:
             await self.session.rollback()
-            logger.error("Failed to revoke refresh tokens for user_id=%s: %s", user_id, e)
+            logger.debug("Refresh tokens revoke failed user_id=%s", user_id)
             raise
 
     async def update_last_used(self, token: str) -> bool:
@@ -136,13 +156,12 @@ class RefreshTokenRepository(AsyncBaseRepository):
         try:
             result = await self.session.execute(
                 update(RefreshToken)
-                .where(RefreshToken.token == token)
+                .where(_matches(token))
                 .values(last_used_at=datetime.now())
             )
             await self.session.commit()
-            logger.info("Refresh token last_used_at updated successfully")
             return result.rowcount > 0
         except Exception as e:
             await self.session.rollback()
-            logger.error(f"Failed to update last_used_at: {str(e)}")
+            logger.debug("Refresh token last_used_at update failed")
             raise

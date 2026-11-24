@@ -17,7 +17,8 @@ class User(Base, table=True):
     
     # TODO(auth): random 31-bit id can collide and is not a DB sequence; needs a migration to change.
     user_id: int = Field(primary_key=True, default_factory=lambda: int(uuid.uuid4().int) % (2**31))
-    # TODO(auth): username is UNIQUE but nullable and defaults to full_name at registration.
+    # UNIQUE but nullable. Registration fills it with a handle derived from the email
+    # (AuthService._unique_username); users can change it on their profile page.
     username: Optional[str] = Field(default=None, unique=True, index=True, max_length=100)
     email: str = Field(unique=True, index=True, max_length=100)
     hashed_password: str = Field(max_length=255)
@@ -30,7 +31,9 @@ class User(Base, table=True):
 class RefreshToken(Base, table=True):
     """Opaque refresh token table, one row per issued token.
 
-    ``token`` holds the random string sent to the client (looked up by exact value).
+    ``token`` holds ``SecurityUtil.hash_refresh_token(raw)`` (``"sha256:<hex>"``), never
+    the raw value sent to the client. Rows written before 2026-11-24 still hold the raw
+    token; the repository accepts both until those expire.
     Rotation marks the old row ``revoked`` and inserts a new one.
     """
 

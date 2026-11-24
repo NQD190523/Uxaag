@@ -69,7 +69,7 @@ class SecurityUtil:
             sha256_hash = hashlib.sha256(plain_password.encode("utf-8")).digest()
             return bcrypt.checkpw(sha256_hash, hashed_password.encode('utf-8'))
         except Exception as e:
-            logger.error("Password verification error: %s", e)
+            logger.exception("Password verification failed")
             return False
         
     def _create_access_token(self, data: Dict[str, Any]) -> str:
@@ -108,6 +108,19 @@ class SecurityUtil:
         value is stored in the DB and sent to the client as an HttpOnly cookie.
         """
         return secrets.token_urlsafe(48)
+
+    @staticmethod
+    def hash_refresh_token(token: str) -> str:
+        """Return the value stored in the DB for a refresh token: ``"sha256:" + hex``.
+
+        SECURITY: only this digest is stored, so a DB leak does not expose usable
+        refresh tokens. A plain SHA-256 (no salt, no bcrypt) is enough here because the
+        input is 48 random bytes, not a guessable password, and it keeps the lookup an
+        indexed equality match.
+        Why the prefix: rows written before hashing hold the raw token; the prefix makes
+        hashed and legacy rows impossible to confuse.
+        """
+        return "sha256:" + hashlib.sha256(token.encode("utf-8")).hexdigest()
 
     def _verify_token(self, token: str) -> Optional[Dict[str, Any]]:
         """Verify a JWT's signature and expiry.

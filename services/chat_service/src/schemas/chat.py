@@ -207,6 +207,17 @@ class CurrentUserChatRoomStatusResponse(BaseModel):
     left_at: Optional[datetime] = None
 
 
+class RoomMembershipResponse(BaseModel):
+    """Answer to "is the caller an active participant of this room?".
+
+    Returned by ``GET /chat/rooms/{chat_room_id}/membership``; other services
+    (document-service) use it for room-level authorization.
+    """
+    chat_room_id: int
+    user_id: int
+    is_member: bool
+
+
 class ChatMessageHistoryResponse(BaseModel):
     """Message history payload for a room, including participants and last-message preview."""
     messages: List[ChatMessageResponse]

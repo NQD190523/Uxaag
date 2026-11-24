@@ -28,9 +28,14 @@ class TokenResponse(BaseModel):
     ``expires_in`` is the access-token lifetime in seconds. ``refresh_token`` is
     also set as an HttpOnly cookie by the router; ``/auth/refresh`` blanks it in the
     JSON body.
+
+    Why Optional: ``/auth/refresh`` returns it as ``None`` (JS must not see the
+    rotated token), so the declared type must allow it (bug A4). FastAPI 0.128 does
+    not re-validate a returned model instance, so the old ``str`` type did not
+    crash, but the OpenAPI schema and type checkers were wrong.
     """
     access_token: str
-    refresh_token: str
+    refresh_token: Optional[str] = None
     token_type: str = "bearer"
     expires_in: float
 

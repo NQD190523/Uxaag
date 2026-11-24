@@ -1,3 +1,10 @@
+# Docker's own console log is capped (10 MB x 3) so containers can't fill the disk.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "3"
+
 services:
 # Redis
   redis:
@@ -8,6 +15,7 @@ services:
     volumes:
       - redis-data:/data
     restart: unless-stopped
+    logging: *default-logging
   # API Gateway
   api-gateway:
     build:
@@ -17,9 +25,11 @@ services:
       - "8000:8000"
     volumes:
       - ./services/api_gateway:/app/services/api_gateway
+      - ./logs:/app/logs  # service log files (shared.logger) on the host
     depends_on:
       - redis
     restart: unless-stopped
+    logging: *default-logging
 
   # Chat Service (build context = repo root so Dockerfile can COPY libs/shared + services/chat_service)
   chat-service:
@@ -30,12 +40,14 @@ services:
       - "8005:8005"
     volumes:
       - ./services/chat_service:/app/services/chat_service
+      - ./logs:/app/logs  # service log files (shared.logger) on the host
     # Inside Docker, localhost is this container — use the compose service name for Redis.
     environment:
       REDIS_URL: redis://redis:6379/0
     depends_on:
       - redis
     restart: unless-stopped
+    logging: *default-logging
 
   # Authentication Service
   auth-service:
@@ -44,9 +56,11 @@ services:
       dockerfile: services/auth_service/Dockerfile
     volumes:
       - ./services/auth_service:/app/services/auth_service
+      - ./logs:/app/logs  # service log files (shared.logger) on the host
     depends_on:
       - redis
     restart: unless-stopped
+    logging: *default-logging
     ports:
       - "8006:8006"
 
@@ -59,9 +73,15 @@ services:
       - "8001:8001"
     volumes:
       - ./services/document_service:/app/services/document_service
+      - ./logs:/app/logs  # service log files (shared.logger) on the host
+    # Room-membership checks go document -> gateway -> chat (bug D1); localhost would be
+    # this container, so use the gateway's compose name.
+    environment:
+      API_GATEWAY_URL: http://api-gateway:8000
     depends_on:
       - redis
     restart: unless-stopped
+    logging: *default-logging
 
   # RAG Service
   rag-service:
@@ -72,9 +92,11 @@ services:
       - "8002:8002"
     volumes:
       - ./services/rag_service:/app/services/rag_service
+      - ./logs:/app/logs  # service log files (shared.logger) on the host
     depends_on:
       - redis
     restart: unless-stopped
+    logging: *default-logging
 
 # Named volumes used by services (e.g. redis-data above) must be declared here.
 volumes:

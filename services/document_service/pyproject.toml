@@ -14,7 +14,12 @@ pydantic = ">=2.12.0,<3.0.0"
 python-dotenv = ">=1.2.1,<2.0.0"
 python-multipart = ">=0.0.20,<0.0.21"
 PyMuPDF = ">=1.24.0"
+# Membership check against chat-service via the gateway (clients/chat_membership_client.py).
+httpx = ">=0.28.1,<0.29.0"
 shared = { path = "../../libs/shared", develop = true }
+
+[tool.poetry.group.dev.dependencies]
+pytest = ">=9.0.2,<10"
 
 [build-system]
 requires = ["poetry-core>=2.0.0,<3.0.0"]
