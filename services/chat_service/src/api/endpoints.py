@@ -7,7 +7,7 @@ Services raise ``ValueError`` for bad input; handlers map it to 400/404 here.
 
 from typing import List
 
-from fastapi import APIRouter, Depends, Header, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request, status
 from sqlalchemy.exc import NoResultFound
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -17,11 +17,15 @@ from db.database import get_async_session
 from models.chat import chatRoom
 from schemas.chat import (
     ChatMessageHistoryResponse,
+    ChatMessagePageResponse,
     ChatMessageRequest,
     ChatMessageResponse,
     ChatParticipantResponse,
     ChatRoom,
     ChatRoomCreateRequest,
+    ChatRoomUpdateRequest,
+    ChatRoomUpdateResponse,
+    LeaveChatRoomResponse,
     LatestChatMessageResponse,
     RoomMembershipResponse,
     UserChatRoomResponse,
@@ -306,19 +310,149 @@ async def get_room_membership(
         )
 
 
+@router.get(
+    "/rooms/{chat_room_id}/messages",
+    status_code=status.HTTP_200_OK,
+    response_model=ChatMessagePageResponse,
+)
+async def get_older_chat_messages(
+    chat_room_id: int,
+    before: int = Query(..., description="Id of the oldest message the client has"),
+    limit: int = Query(default=50, ge=1, le=200),
+    session: AsyncSession = Depends(get_async_session),
+    user_id: int = Header(..., alias="x-user-id"),
+) -> ChatMessagePageResponse:
+    """GET /chat/rooms/{chat_room_id}/messages?before=&limit=: an older history page.
+
+    Auth: ``x-user-id`` header (gateway); caller must be an active participant.
+    Query: ``before`` (required) id of the oldest message already loaded;
+    ``limit`` page size (default 50, 1..200).
+    Response: 200 ``ChatMessagePageResponse`` (messages oldest first, ``has_more``).
+    Errors: 400 ``before`` is not a message of this room; 403 not a participant;
+    422 bad query; 500 otherwise.
+    """
+    try:
+        await _require_participant(chat_room_id, user_id, session)
+        messages, has_more = await chat_service.get_chat_messages_page(
+            chat_room_id=chat_room_id,
+            session=session,
+            limit=limit,
+            before_message_id=before,
+        )
+        return ChatMessagePageResponse(messages=messages, has_more=has_more)
+    except HTTPException:
+        raise
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception:
+        logger.exception("Failed to page chat messages room_id=%s", chat_room_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error",
+        )
+
+
+@router.post(
+    "/rooms/{chat_room_id}/leave",
+    status_code=status.HTTP_200_OK,
+    response_model=LeaveChatRoomResponse,
+)
+async def leave_chat_room(
+    chat_room_id: int,
+    session: AsyncSession = Depends(get_async_session),
+    user_id: int = Header(..., alias="x-user-id"),
+) -> LeaveChatRoomResponse:
+    """POST /chat/rooms/{chat_room_id}/leave: the caller leaves the room.
+
+    Auth: ``x-user-id`` header (gateway); a user can only remove themselves.
+    Response: 200 ``LeaveChatRoomResponse``; ``room_archived`` is true when the
+    caller was the last active member (room deactivated and hidden from every list;
+    there is no delete because rooms have no owner yet).
+    Errors: 403 caller is not an active participant; 500 otherwise.
+    Note: sockets already open in the room are not closed here; the next message
+    sent on one is refused (closed with 1008), and the client closes its own socket.
+    """
+    try:
+        archived = await chat_service.leave_chat_room(
+            chat_room_id=chat_room_id, user_id=int(user_id), session=session
+        )
+        return LeaveChatRoomResponse(chat_room_id=str(chat_room_id), room_archived=archived)
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=str(e))
+    except Exception:
+        logger.exception("Failed to leave chat room room_id=%s", chat_room_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error",
+        )
+
+
+@router.patch(
+    "/rooms/{chat_room_id}",
+    status_code=status.HTTP_200_OK,
+    response_model=ChatRoomUpdateResponse,
+)
+async def update_chat_room(
+    chat_room_id: int,
+    body: ChatRoomUpdateRequest,
+    session: AsyncSession = Depends(get_async_session),
+    user_id: int = Header(..., alias="x-user-id"),
+) -> ChatRoomUpdateResponse:
+    """PATCH /chat/rooms/{chat_room_id}: rename a room and/or change its description.
+
+    Auth: ``x-user-id`` header (gateway); any active participant may edit (rooms
+    have no owner column yet).
+    Body: ``ChatRoomUpdateRequest`` (``chat_room_name`` and/or ``description``,
+    each <= 255 chars; omitted fields unchanged, an empty description clears it).
+    Response: 200 ``ChatRoomUpdateResponse``.
+    Errors: 400 blank name or empty body; 403 not a participant (also for a room
+    that does not exist, since it has no participants); 422 too long; 500 otherwise.
+    """
+    try:
+        await _require_participant(chat_room_id, user_id, session)
+        room = await chat_service.update_chat_room(chat_room_id, body, session)
+        # Field names only; the new values are user content and stay out of logs.
+        logger.info(
+            "Chat room updated room_id=%s fields=%s",
+            chat_room_id,
+            ",".join(sorted(body.model_dump(exclude_none=True))),
+        )
+        return ChatRoomUpdateResponse(
+            chat_room_id=str(room.chat_room_id),
+            chat_room_name=room.chat_room_name,
+            description=room.description,
+            updated_at=room.updated_at,
+        )
+    except HTTPException:
+        raise
+    except NoResultFound:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Chat room not found")
+    except ValueError as e:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(e))
+    except Exception:
+        logger.exception("Failed to update chat room room_id=%s", chat_room_id)
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error",
+        )
+
+
 @router.get("/messages/{chat_room_id}", response_model=ChatMessageHistoryResponse)
 async def get_chat_messages(
     chat_room_id: str,
     session: AsyncSession = Depends(get_async_session),
     user_id: int = Header(..., alias="x-user-id"),
+    limit: int = Query(default=50, ge=1, le=200),
 ):
-    """GET /chat/messages/{chat_room_id}: room history, participants and preview.
+    """GET /chat/messages/{chat_room_id}: newest history page, participants and preview.
 
     Auth: ``x-user-id`` header (injected by the gateway); the caller must be an
     active participant of the room.
     Path: ``chat_room_id`` numeric room id as a string.
-    Response: 200 ``ChatMessageHistoryResponse`` (messages oldest first,
-    participants, last_message, current_user_status).
+    Query: ``limit`` page size (default 50, 1..200; 422 outside).
+    Response: 200 ``ChatMessageHistoryResponse`` (newest ``limit`` messages oldest
+    first, ``has_more``, participants, last_message, current_user_status). Older
+    pages: ``GET /chat/rooms/{chat_room_id}/messages?before=``.
     Errors: 400 non-numeric room id; 403 caller is not a participant; 500 otherwise.
     """
     try:
@@ -331,10 +465,9 @@ async def get_chat_messages(
             )
         await _require_participant(room_id, user_id, session)
 
-        messages: List[ChatMessageResponse] = (
-            await chat_service.get_chat_messages_by_chat_room_id(
-                chat_room_id=room_id, session=session
-            )
+        # Why paged: rooms grow without bound and the UI rendered every message on open.
+        messages, has_more = await chat_service.get_chat_messages_page(
+            chat_room_id=room_id, session=session, limit=limit
         )
         participants: List[ChatParticipantResponse] = (
             await chat_service.get_chat_room_participants(
@@ -358,6 +491,7 @@ async def get_chat_messages(
         )
         return {
             "messages": messages,
+            "has_more": has_more,
             "participants": participants,
             "last_message": last_message,
             "current_user_status": current_user_status,

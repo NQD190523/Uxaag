@@ -67,7 +67,8 @@ async def websocket_chat_endpoint(
     before ``accept()`` surfaces as an opaque 1006).
 
     Close codes: 4401 (``WS_CLOSE_UNAUTHORIZED``) missing/invalid/expired token, so
-    the client refreshes and reconnects; 1008 bad room id or not a room member (final);
+    the client refreshes and reconnects; 1008 bad room id or not a room member (final),
+    also sent when a user who has left the room tries to send on an old socket;
     1011 JWT secret not configured, membership check failure or runtime error.
     """
     # One request id per connection (all lines of this socket share it); the user id
@@ -171,6 +172,25 @@ async def websocket_chat_endpoint(
                 content = coalesce_inbound_message_text(message)
                 if not content:
                     continue
+
+                # SECURITY: membership was checked at the handshake, but the user may have
+                # left since (POST /chat/rooms/{id}/leave, possibly from another tab).
+                # Re-check per message so leaving revokes write access; one indexed query.
+                # A DB error here propagates to the handler below (closes with 1011).
+                async with get_background_session() as db_session:
+                    still_member = await ChatRepository(session=db_session).is_participant(
+                        chat_room_id=int(chat_room_id), user_id=int(user_id)
+                    )
+                if not still_member:
+                    logger.warning(
+                        "WebSocket closed room_id=%s user_id=%s reason=left_room",
+                        chat_room_id,
+                        user_id,
+                    )
+                    close_code = 1008
+                    websocket_service.disconnect(websocket, chat_room_id)
+                    await websocket.close(code=1008, reason="No longer a member of this chat room")
+                    break
 
                 # True when the user addressed the model (frontend marks ``@model`` prompts).
                 is_model_prompt = parse_is_model_prompt(message.get("is_model_prompt"))

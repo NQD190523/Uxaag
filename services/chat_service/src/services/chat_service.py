@@ -6,7 +6,7 @@ Called by the REST router (request-scoped sessions) and by WebSocket handlers
 
 from datetime import datetime, timedelta
 import os
-from typing import Any, List
+from typing import Any, List, Optional, Tuple
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from models.chat import chatMessage, chatRoom, chatParticipant
@@ -18,6 +18,7 @@ from schemas.chat import (
     ChatParticipantResponse,
     ChatRoom,
     ChatMessageResponse,
+    ChatRoomUpdateRequest,
     LastMessagePreviewResponse,
     CurrentUserChatRoomStatusResponse,
 )
@@ -126,6 +127,100 @@ class ChatService:
             self.logger.debug("Failed to get chat messages by chat room ID")
             raise
     
+    async def get_chat_messages_page(
+        self,
+        chat_room_id: int,
+        session: AsyncSession,
+        limit: int = 50,
+        before_message_id: Optional[int] = None,
+    ) -> Tuple[List[ChatMessageResponse], bool]:
+        """Return one page of a room's messages (oldest first) and whether older exist.
+
+        Args:
+            chat_room_id: Room to read.
+            session: Request-scoped DB session.
+            limit: Page size; the router validates 1..200.
+            before_message_id: Id of the oldest message the client has; None = newest page.
+
+        Returns:
+            ``(messages, has_more)``.
+
+        Raises:
+            ValueError: ``before_message_id`` is not a message of this room.
+        """
+        chat_repository = ChatRepository(session=session)
+        before = None
+        if before_message_id is not None:
+            before = await chat_repository.get_chat_message_in_room(
+                chat_room_id, before_message_id
+            )
+            if before is None:
+                raise ValueError("before must be a message id of this chat room")
+        messages, has_more = await chat_repository.get_chat_messages_page(
+            chat_room_id=chat_room_id, limit=limit, before=before
+        )
+        return [
+            ChatMessageResponse(
+                id=str(message.chat_message_id),
+                chat_room_id=str(message.chat_room_id),
+                user_id=message.user_id,
+                role=message.role or "user",
+                message=message.message,
+                created_at=message.created_at,
+                updated_at=message.updated_at,
+            )
+            for message in messages
+        ], has_more
+
+    async def leave_chat_room(
+        self, chat_room_id: int, user_id: int, session: AsyncSession
+    ) -> bool:
+        """Remove the user from the room; archive the room when they were the last member.
+
+        Returns:
+            True if the room was archived.
+
+        Raises:
+            ValueError: The user is not an active participant.
+        """
+        archived = await ChatRepository(session=session).leave_chat_room(
+            chat_room_id=chat_room_id, user_id=user_id
+        )
+        self.logger.info(
+            "User left chat room room_id=%s user_id=%s archived=%s",
+            chat_room_id,
+            user_id,
+            archived,
+        )
+        return archived
+
+    async def update_chat_room(
+        self, chat_room_id: int, update: ChatRoomUpdateRequest, session: AsyncSession
+    ) -> chatRoom:
+        """Rename a room and/or change its description.
+
+        The name is trimmed and must not be empty. An empty description clears it.
+        Membership is checked by the router (any active member may edit, since rooms
+        have no owner yet).
+
+        Raises:
+            ValueError: Nothing to update, or the name is blank.
+            sqlalchemy.exc.NoResultFound: The room does not exist.
+        """
+        values: dict = {}
+        if update.chat_room_name is not None:
+            name = update.chat_room_name.strip()
+            if not name:
+                raise ValueError("chat_room_name must not be empty")
+            values["chat_room_name"] = name
+        if update.description is not None:
+            values["description"] = update.description.strip() or None
+        if not values:
+            raise ValueError("Nothing to update")
+        return await ChatRepository(session=session).update_chat_room_details(
+            chat_room_id, values
+        )
+
     async def get_chat_room_participants(self, chat_room_id: int, session: AsyncSession) -> List[ChatParticipantResponse]:  
         """Get a room's participants enriched with auth-user profile data.
 
@@ -378,21 +473,25 @@ class ChatService:
             raise
     
     async def add_user_to_chat_room(self, chat_room_id: int, user_id: int, session: AsyncSession):
-        """Add a user to a room.
+        """Add a user to a room, or bring back a user who left it.
 
         Raises:
-            ValueError: If the user already has a participant row in the room.
+            ValueError: If the user is already an active participant of the room.
         """
         # Note: the ValueError below propagates unchanged; the router logs the one
         # WARNING (no traceback) and maps it to HTTP 400.
         try:
             chat_repository: ChatRepository = ChatRepository(session=session)
             # Check if the user is already in the chat room
-            chat_participants = await chat_repository.get_chat_room_participants(chat_room_id=chat_room_id)
-            if chat_participants:
-                for chat_participant in chat_participants:
-                    if chat_participant.user_id == user_id:
-                        raise ValueError("User already in chat room")
+            existing = await chat_repository.get_chat_room_participant_by_user_id(
+                chat_room_id=chat_room_id, user_id=user_id
+            )
+            if existing is not None:
+                if existing.is_active:
+                    raise ValueError("User already in chat room")
+                # They left earlier: reuse their row instead of failing, so a member
+                # who left can be invited back (previously "already in chat room").
+                return await chat_repository.reactivate_participant(existing)
             chat_participant_model = chatParticipant(chat_room_id=chat_room_id, user_id=user_id)
             chat_participant_created = await chat_repository.create_chat_participant(chat_participant_model)
             return chat_participant_created

@@ -5,11 +5,11 @@ Commits happen inside each write method; errors are logged and re-raised so the
 service/router layers decide how to map them to HTTP errors.
 """
 
-from typing import List
+from typing import List, Optional, Tuple
 from datetime import datetime
 import uuid
 from shared.logger import get_logger
-from sqlalchemy import bindparam, desc, select, text, update
+from sqlalchemy import and_, bindparam, desc, func, or_, select, text, update
 from sqlmodel.ext.asyncio.session import AsyncSession
 
 from models.chat import chatMessage, chatRoom, chatParticipant
@@ -167,6 +167,70 @@ class ChatRepository(AsyncBaseRepository):
             logger.debug("Failed to get chat messages by chat room ID")
             raise
 
+    async def get_chat_message_in_room(
+        self, chat_room_id: int, chat_message_id: int
+    ) -> Optional[chatMessage]:
+        """Return one message of a room, or None (also when it belongs to another room)."""
+        try:
+            statement = select(chatMessage).where(
+                chatMessage.chat_room_id == chat_room_id,
+                chatMessage.chat_message_id == chat_message_id,
+            )
+            result = await self.session.execute(statement)
+            return result.scalars().first()
+        except Exception:
+            logger.debug("Failed to get chat message by id")
+            raise
+
+    async def get_chat_messages_page(
+        self,
+        chat_room_id: int,
+        limit: int,
+        before: Optional[chatMessage] = None,
+    ) -> Tuple[List[chatMessage], bool]:
+        """Return up to ``limit`` messages older than ``before`` (newest page if None).
+
+        Ordering is ``(created_at, chat_message_id)``, oldest first in the result.
+        Why a keyset cursor (the ``before`` message) and not OFFSET: new messages arrive
+        while a user scrolls back, which would shift OFFSET pages and duplicate or skip
+        rows. Message ids are random, so the cursor compares the
+        ``(created_at, id)`` pair, not the id alone.
+
+        Args:
+            chat_room_id: Room to read.
+            limit: Page size (caller validates the range).
+            before: The oldest message the client already has, or None.
+
+        Returns:
+            ``(messages oldest first, has_more)``; ``has_more`` is True when older
+            messages exist beyond this page.
+        """
+        try:
+            statement = select(chatMessage).where(chatMessage.chat_room_id == chat_room_id)
+            if before is not None:
+                statement = statement.where(
+                    or_(
+                        chatMessage.created_at < before.created_at,
+                        and_(
+                            chatMessage.created_at == before.created_at,
+                            chatMessage.chat_message_id < before.chat_message_id,
+                        ),
+                    )
+                )
+            # Newest first + one extra row to learn whether an older page exists.
+            statement = statement.order_by(
+                chatMessage.created_at.desc(), chatMessage.chat_message_id.desc()
+            ).limit(limit + 1)
+            result = await self.session.execute(statement)
+            rows = list(result.scalars().all())
+            has_more = len(rows) > limit
+            page = rows[:limit]
+            page.reverse()
+            return page, has_more
+        except Exception:
+            logger.debug("Failed to get chat messages page")
+            raise
+
     async def get_latest_chat_message_by_chat_room_id(self, chat_room_id: int) -> chatMessage | None:
         """Get the newest message of a room, or None if the room has no messages.
 
@@ -226,6 +290,110 @@ class ChatRepository(AsyncBaseRepository):
             return result.scalars().first()
         except Exception as e:
             logger.debug("Failed to get chat room participant by user id")
+            raise
+
+    async def reactivate_participant(self, participant: chatParticipant) -> chatParticipant:
+        """Make a former member (row with ``is_active=False``) active again and commit."""
+        try:
+            now = datetime.now()
+            participant.is_active = True
+            participant.left_at = None
+            participant.joined_at = now
+            participant.updated_at = now
+            self.session.add(participant)
+            await self.session.commit()
+            await self.session.refresh(participant)
+            return participant
+        except Exception:
+            await self.session.rollback()
+            logger.debug("Failed to reactivate chat participant")
+            raise
+
+    async def leave_chat_room(self, chat_room_id: int, user_id: int) -> bool:
+        """Mark the user's participation as left; archive the room if nobody is left.
+
+        Both updates share one commit, so a partial failure cannot leave a room
+        active with zero members. The room row is locked first (``FOR UPDATE``) so two
+        members leaving at the same moment run one after the other; otherwise each
+        could still see the other as active and neither would archive the room.
+
+        Returns:
+            True when this was the last active member and the room was archived
+            (``chatroom.is_active = False``, hidden from every room list).
+
+        Raises:
+            ValueError: The user is not an active participant of the room.
+        """
+        try:
+            now = datetime.now()
+            # Serialize concurrent leaves of the same room (see docstring). No-op on
+            # SQLite (tests); Postgres holds the lock until the commit below.
+            await self.session.execute(
+                select(chatRoom.chat_room_id)
+                .where(chatRoom.chat_room_id == chat_room_id)
+                .with_for_update()
+            )
+            result = await self.session.execute(
+                update(chatParticipant)
+                .where(
+                    chatParticipant.chat_room_id == chat_room_id,
+                    chatParticipant.user_id == user_id,
+                    chatParticipant.is_active == True,  # noqa: E712 (SQL comparison)
+                )
+                .values(is_active=False, left_at=now, updated_at=now)
+            )
+            if result.rowcount == 0:
+                await self.session.rollback()
+                raise ValueError("You are not a participant of this chat room")
+            remaining = await self.session.execute(
+                select(func.count())
+                .select_from(chatParticipant)
+                .where(
+                    chatParticipant.chat_room_id == chat_room_id,
+                    chatParticipant.is_active == True,  # noqa: E712 (SQL comparison)
+                )
+            )
+            archived = remaining.scalar_one() == 0
+            if archived:
+                await self.session.execute(
+                    update(chatRoom)
+                    .where(chatRoom.chat_room_id == chat_room_id)
+                    .values(is_active=False, updated_at=now)
+                )
+            await self.session.commit()
+            return archived
+        except ValueError:
+            raise
+        except Exception:
+            await self.session.rollback()
+            logger.debug("Failed to leave chat room")
+            raise
+
+    async def update_chat_room_details(
+        self, chat_room_id: int, values: dict
+    ) -> chatRoom:
+        """Apply ``values`` (``chat_room_name`` / ``description``) to a room and commit.
+
+        Raises:
+            sqlalchemy.exc.NoResultFound: If the room does not exist.
+        """
+        try:
+            # execute().scalars(): this module imports SQLAlchemy's ``select``, for which
+            # ``session.exec(...).one()`` yields a Row, not the chatRoom instance.
+            result = await self.session.execute(
+                select(chatRoom).where(chatRoom.chat_room_id == chat_room_id)
+            )
+            room = result.scalars().one()
+            for key, value in values.items():
+                setattr(room, key, value)
+            room.updated_at = datetime.now()
+            self.session.add(room)
+            await self.session.commit()
+            await self.session.refresh(room)
+            return room
+        except Exception:
+            await self.session.rollback()
+            logger.debug("Failed to update chat room")
             raise
 
     async def is_participant(self, chat_room_id: int, user_id: int) -> bool:

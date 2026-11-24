@@ -7,7 +7,7 @@ The conversation/join/leave request models are not referenced anywhere in ``src/
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 from typing import Optional, Dict, Any, List
 from datetime import datetime
 
@@ -218,9 +218,50 @@ class RoomMembershipResponse(BaseModel):
     is_member: bool
 
 
-class ChatMessageHistoryResponse(BaseModel):
-    """Message history payload for a room, including participants and last-message preview."""
+class ChatRoomUpdateRequest(BaseModel):
+    """Body of ``PATCH /chat/rooms/{chat_room_id}``. Omitted fields stay unchanged.
+
+    Whitespace is stripped before the length checks, and the name limit matches
+    room creation (100), so a name valid at creation is valid on rename too.
+    """
+    model_config = ConfigDict(str_strip_whitespace=True)
+
+    chat_room_name: Optional[str] = Field(default=None, max_length=100)
+    description: Optional[str] = Field(default=None, max_length=255)
+
+
+class ChatRoomUpdateResponse(BaseModel):
+    """Room fields after a rename/description change."""
+    chat_room_id: str
+    chat_room_name: str
+    description: Optional[str] = None
+    updated_at: datetime
+
+
+class LeaveChatRoomResponse(BaseModel):
+    """Result of ``POST /chat/rooms/{chat_room_id}/leave``.
+
+    ``room_archived`` is true when the caller was the last active member, so the room
+    was deactivated and no longer appears in anyone's room list.
+    """
+    chat_room_id: str
+    room_archived: bool
+
+
+class ChatMessagePageResponse(BaseModel):
+    """One page of older messages (oldest first) for "load older messages"."""
     messages: List[ChatMessageResponse]
+    has_more: bool
+
+
+class ChatMessageHistoryResponse(BaseModel):
+    """Message history payload for a room, including participants and last-message preview.
+
+    ``messages`` is only the newest page (oldest first); ``has_more`` says whether
+    older messages can be fetched from ``GET /chat/rooms/{id}/messages?before=``.
+    """
+    messages: List[ChatMessageResponse]
+    has_more: bool = False
     participants: List[ChatParticipantResponse]
     last_message: Optional[LastMessagePreviewResponse] = None
     current_user_status: Optional[CurrentUserChatRoomStatusResponse] = None
