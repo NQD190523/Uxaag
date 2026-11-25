@@ -3,8 +3,9 @@
 Design:
 - Full chat messages are broadcast only to the specific room in-memory.
 - Lightweight room-list updates are published to one global Redis channel.
-- Each worker subscribes to that global channel and broadcasts updates to all
-  connected sockets so every chat list can refresh in real time.
+- Each worker subscribes to that global channel and delivers each update to the
+  local sockets of that room's members only (``services/room_list_fanout.py``);
+  the update carries message text, so it must not reach non-members.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ from typing import Final
 import redis.asyncio as redis
 
 from core.config import config
-from services.websocket import websocket_service
+from services.room_list_fanout import fan_out_room_list_update
 from shared.logger import get_logger
 
 logger = get_logger("chat-service")
@@ -109,8 +110,9 @@ async def run_room_pubsub_listener(stop_event: asyncio.Event) -> None:
                     if not isinstance(data, str):
                         continue
                     try:
-                        # Every room's sockets get it so any open chat list can refresh.
-                        await websocket_service.broadcast_all(message=data)
+                        # Only members of the updated room get it (in any room they
+                        # have open), so their chat list refreshes without leaking text.
+                        await fan_out_room_list_update(data)
                     except Exception:
                         # One bad message must not stop the listener; per-message
                         # success is not logged (high volume).

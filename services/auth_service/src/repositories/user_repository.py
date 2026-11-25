@@ -18,6 +18,9 @@ from models.user import User
 # Get configured logger
 logger = get_logger("auth-service")
 
+# Most rows a user search returns (the UI shows a short pick list).
+MATCHING_USERS_LIMIT = 20
+
 class BaseRepository:
     """Base repository class holding a synchronous session (unused by this service)."""
     def __init__(self, session: Session):
@@ -158,16 +161,25 @@ class UserRepository(AsyncBaseRepository):
         """Search users by username, full name, email, or user_id.
 
         Case-insensitive substring match; a numeric query also matches ``user_id``
-        exactly. No row limit is applied.
+        exactly. ``%`` and ``_`` in the query are matched literally, and at most
+        ``MATCHING_USERS_LIMIT`` rows are returned.
+
+        SECURITY: before the security review (2026-11-26) ``q="%"`` matched every
+        user and there was no row cap, so one call listed every account.
 
         Returns:
-            All matching users.
+            Up to ``MATCHING_USERS_LIMIT`` matching users.
         """
         try:
+            # Escape LIKE wildcards so user text is always a literal substring.
+            escaped = (
+                search_query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            )
+            pattern = f"%{escaped}%"
             filters = [
-                User.username.ilike(f"%{search_query}%"),
-                User.full_name.ilike(f"%{search_query}%"),
-                User.email.ilike(f"%{search_query}%"),
+                User.username.ilike(pattern, escape="\\"),
+                User.full_name.ilike(pattern, escape="\\"),
+                User.email.ilike(pattern, escape="\\"),
             ]
 
             # If input is numeric, also match user_id exactly.
@@ -175,7 +187,7 @@ class UserRepository(AsyncBaseRepository):
                 filters.append(User.user_id == int(search_query))
 
             result = await self.session.execute(
-                select(User).where(or_(*filters))
+                select(User).where(or_(*filters)).limit(MATCHING_USERS_LIMIT)
             )
             users = result.scalars().all()
             return users

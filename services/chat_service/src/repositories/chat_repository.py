@@ -396,6 +396,22 @@ class ChatRepository(AsyncBaseRepository):
             logger.debug("Failed to update chat room")
             raise
 
+    async def get_active_participant_user_ids(self, chat_room_id: int) -> List[int]:
+        """Return the user ids of the room's active participants (one query).
+
+        Used to decide who may receive a room's chat-list update.
+        """
+        try:
+            statement = select(chatParticipant.user_id).where(
+                chatParticipant.chat_room_id == chat_room_id,
+                chatParticipant.is_active == True,  # noqa: E712 (SQL comparison)
+            )
+            result = await self.session.execute(statement)
+            return [row[0] for row in result.all() if row[0] is not None]
+        except Exception:
+            logger.debug("Failed to get active participant ids")
+            raise
+
     async def is_participant(self, chat_room_id: int, user_id: int) -> bool:
         """Return True if the user is an active participant of the room.
 

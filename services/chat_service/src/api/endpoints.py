@@ -247,10 +247,11 @@ async def get_profile_user_chat_rooms(
 ) -> List[UserChatRoomResponse]:
     """GET /chat/users/{profile_user_id}/chat-rooms: list another user's active rooms.
 
-    Auth: ``x-user-id`` header (injected by the gateway) is required, but the caller
-    may view any user's rooms. This is intentional: the endpoint backs the profile
-    view, which lists the rooms a user belongs to. NOTE: restricting it to rooms
-    shared with the caller would be a product decision and is not applied here.
+    Auth: ``x-user-id`` header (injected by the gateway) is required, and the caller
+    may view any user's room list: it backs the profile view. SECURITY: for rooms
+    the caller is not an active member of, ``latest_message`` and ``description``
+    are returned as null, because they are room content (security review,
+    2026-11-26). Viewing your own profile returns everything.
     Path: ``profile_user_id`` int user id.
     Response: 200 list of ``UserChatRoomResponse`` (status is relative to that user).
     Errors: 422 if the id is not an int; 500 on any failure.
@@ -260,10 +261,22 @@ async def get_profile_user_chat_rooms(
             user_id=profile_user_id,
             session=session,
         )
-        return [
-            await _build_user_chat_room_response(room, profile_user_id, session)
-            for room in rooms
-        ]
+        if int(user_id) == int(profile_user_id):
+            caller_room_ids = {room.chat_room_id for room in rooms}
+        else:
+            # One query for the caller's own rooms instead of a check per room.
+            caller_rooms = await chat_service.get_all_user_chat_rooms(
+                user_id=int(user_id), session=session
+            )
+            caller_room_ids = {room.chat_room_id for room in caller_rooms}
+        responses = []
+        for room in rooms:
+            item = await _build_user_chat_room_response(room, profile_user_id, session)
+            if room.chat_room_id not in caller_room_ids:
+                item.latest_message = None
+                item.description = None
+            responses.append(item)
+        return responses
     except HTTPException:
         raise
     except Exception as e:

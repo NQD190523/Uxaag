@@ -142,7 +142,8 @@ async def websocket_chat_endpoint(
             await websocket.close(code=1008, reason="Not a member of this chat room")
             return
 
-        await websocket_service.connect(websocket=websocket, room_id=chat_room_id)
+        # user_id lets room-list updates reach only rooms this user belongs to.
+        await websocket_service.connect(websocket=websocket, room_id=chat_room_id, user_id=user_id)
         close_code = 1000  # default if the loop ends without a more specific code
         logger.info("WebSocket connected room_id=%s user_id=%s", chat_room_id, user_id)
 
