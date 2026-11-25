@@ -304,3 +304,19 @@ def test_socket_of_user_who_left_cannot_send(client, db, monkeypatch):
             ws.receive_text()
     assert exc.value.code == 1008
     assert db.exec(select(chatMessage).where(chatMessage.message == "still here?")).all() == []
+
+
+# --- Own membership status -------------------------------------------------------------------
+
+
+def test_own_status_is_active_without_recent_login(client):
+    """A member with no last_login (e.g. just signed up) is not labelled as having left.
+
+    The fixture's "user" table is empty, so the old presence-based rule returned
+    is_active=False ("You left this room") for every member.
+    """
+    history = client.get(f"/api/v1/chat/messages/{ROOM}", headers=_as(ALICE)).json()
+    assert history["current_user_status"]["is_member"] is True
+    assert history["current_user_status"]["is_active"] is True
+    rooms = client.get("/api/v1/chat/user-chat-rooms", headers=_as(ALICE)).json()
+    assert rooms[0]["current_user_status"]["is_active"] is True

@@ -269,7 +269,14 @@ class ChatService:
 
         Returns:
             Status with ``is_member=False`` when the user has no participant row;
-            otherwise ``is_active`` follows the same rule as the participants list.
+            otherwise ``is_active`` is the membership flag (False only after leaving).
+
+        Used for the caller's own rooms and, on the profile page, for the profiled
+        user's rooms (``GET /chat/users/{id}/chat-rooms``); in both cases it means
+        membership, not presence.
+        Why not the participants-list rule (membership AND recent login): mixing in
+        presence labelled new users (no last_login yet) and long sessions as "left",
+        which is wrong now that leaving a room is a real action.
         """
         chat_repository: ChatRepository = ChatRepository(session=session)
         participant = await chat_repository.get_chat_room_participant_by_user_id(
@@ -285,9 +292,7 @@ class ChatService:
                 joined_at=None,
                 left_at=None,
             )
-        profiles = await chat_repository.get_user_presence_by_ids([int(user_id)])
-        profile = profiles.get(int(user_id), {})
-        is_active = bool(participant.is_active) and _is_recent_login(profile.get("last_login"))
+        is_active = bool(participant.is_active)
         return CurrentUserChatRoomStatusResponse(
             user_id=user_id,
             chat_room_id=chat_room_id,

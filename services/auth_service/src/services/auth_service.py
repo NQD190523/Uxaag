@@ -111,7 +111,10 @@ class AuthService(BaseService):
                 full_name=registration_data.full_name,
                 is_active=True,
                 created_at=datetime.utcnow(),
-                updated_at=datetime.utcnow()
+                updated_at=datetime.utcnow(),
+                # Signing up logs the user in. Without this, chat-service's presence rule
+                # (recent last_login) showed brand-new users as offline/"left".
+                last_login=datetime.utcnow(),
             )
             
             # Create user in database

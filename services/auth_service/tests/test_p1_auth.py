@@ -266,3 +266,45 @@ def test_unknown_token_is_rejected(fakes):
     """An unknown token never reaches the user lookup."""
     with pytest.raises(ValueError, match="Invalid refresh token"):
         asyncio.run(_service().refresh_token("bad", session=None))
+
+
+# --- Registration sets last_login ------------------------------------------------------------
+
+
+def test_register_sets_last_login(monkeypatch):
+    """Signing up counts as logging in, so presence checks see the new user as recent."""
+    created = {}
+
+    class _Users:
+        def __init__(self, session):
+            pass
+
+        async def get_user_by_email(self, email):
+            return None
+
+        async def get_user_by_username(self, username):
+            return None
+
+        async def create_user(self, user):
+            user.user_id = 99
+            created["user"] = user
+            return user
+
+    class _Tokens:
+        def __init__(self, session):
+            pass
+
+        async def create(self, user_id, token, expires_at):
+            pass
+
+    monkeypatch.setattr(auth_mod, "UserRepository", _Users)
+    monkeypatch.setattr(auth_mod, "RefreshTokenRepository", _Tokens)
+    from schemas.auth_schema import UserRegistration
+
+    result = asyncio.run(_service().register_user(
+        UserRegistration(email="new@example.com", password="longenough1", full_name="N"),
+        session=None,
+    ))
+    assert created["user"].last_login is not None
+    assert result.user.last_login is not None
+    assert created["user"].username == "new"
