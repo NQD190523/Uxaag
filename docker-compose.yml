@@ -83,6 +83,22 @@ services:
     restart: unless-stopped
     logging: *default-logging
 
+  # Web Crawler Service: imports web pages into room documents (saves via the gateway).
+  web-crawler-service:
+    build:
+      context: .
+      dockerfile: services/web_crawler_service/Dockerfile
+    ports:
+      - "8004:8004"
+    volumes:
+      - ./services/web_crawler_service:/app/services/web_crawler_service
+      - ./logs:/app/logs  # service log files (shared.logger) on the host
+    # Membership checks and saves go crawler -> gateway -> chat/document.
+    environment:
+      API_GATEWAY_URL: http://api-gateway:8000
+    restart: unless-stopped
+    logging: *default-logging
+
   # RAG Service
   rag-service:
     build:

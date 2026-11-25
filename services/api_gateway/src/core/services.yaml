@@ -68,3 +68,13 @@ services:
     strip_prefix: true
     timeout: 300
     protected: true
+
+  # Protected. Gateway /crawl/<rest> -> web-crawler-service /api/v1/crawl/<rest>.
+  # 120 s: one request imports up to CRAWL_MAX_URLS pages (15 s fetch cap each, 3 at once)
+  # plus the saves into document-service.
+  crawl:
+    url: http://web-crawler-service:8004/api/v1/crawl
+    prefix: /crawl
+    strip_prefix: true
+    timeout: 120
+    protected: true

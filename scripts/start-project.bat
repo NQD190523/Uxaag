@@ -4,6 +4,7 @@ REM start-project.bat - local dev launcher for RAG Chat Room Web (Windows).
 REM
 REM Starts the core backend + frontend, each in its own window:
 REM   auth-service :8006, chat-service :8005, document-service :8001,
+REM   web-crawler-service :8004,
 REM   api-gateway :8000, Next.js UI :3000
 REM Deliberately NOT started: rag-service (:8002) and Redis (:6379).
 REM
@@ -31,7 +32,7 @@ for %%I in ("%ROOT_DIR%\..\uxaag_UI") do set "UI_DIR=%%~fI"
 
 REM Core services started by this script: name:port:folder (start order matters:
 REM the gateway goes last so its upstreams are already up).
-set "SERVICES=auth-service:8006:auth_service chat-service:8005:chat_service document-service:8001:document_service api-gateway:8000:api_gateway"
+set "SERVICES=auth-service:8006:auth_service chat-service:8005:chat_service document-service:8001:document_service web-crawler-service:8004:web_crawler_service api-gateway:8000:api_gateway"
 
 REM Args: one mode (start|setup|status|stop, default start) plus optional "nopause".
 set "MODE=start"
@@ -111,6 +112,7 @@ set /a port_conflicts=0
 call :check_port 8006 python
 call :check_port 8005 python
 call :check_port 8001 python
+call :check_port 8004 python
 call :check_port 8000 python
 call :check_port 3000 node
 if !port_conflicts! gtr 0 (
@@ -136,6 +138,7 @@ echo ==========================================
 echo   Frontend         http://localhost:3000
 echo   API Gateway      http://localhost:8000
 echo   Document Service http://localhost:8001
+echo   Web Crawler      http://localhost:8004
 echo   Chat Service     http://localhost:8005
 echo   Auth Service     http://localhost:8006
 echo.
